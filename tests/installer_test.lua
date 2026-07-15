@@ -74,7 +74,7 @@ local function fake()
   end
   r.SectionFromUniqueID = function() return "MAIN" end
   r.AddRemoveReaScript = function(add, sec, fn, commit)
-    log[#log + 1] = { kind = "register", file = fn:match("([^/]+)$"), commit = commit }
+    log[#log + 1] = { kind = "register", file = fn:match("([^/]+)$"), path = fn, commit = commit }
     return 40000 + #log
   end
   r.CountActionShortcuts = function() return scenario.existing_shortcuts and 1 or 0 end
@@ -83,14 +83,23 @@ local function fake()
     log[#log + 1] = { kind = "shortcut_dialog", cmd = cmd }
   end
   r.GetUserFileNameForRead = function() return false, "" end
-  r.GetResourcePath = function() return "/fake/REAPER" end
-  r.RecursiveCreateDirectory = function() return 1 end
+  -- a real temp dir, so the copy step is actually exercised instead of faked
+  r.GetResourcePath = function() return scenario.resource_path end
+  r.RecursiveCreateDirectory = function(path)
+    os.execute(string.format("mkdir -p %q", path))
+    return 1
+  end
   r.ExecProcess = function(cmd) log[#log + 1] = { kind = "exec", cmd = cmd } return "0\n" end
   return r
 end
 
 local function run(name, setup, check)
   scenario = setup
+  -- fresh throwaway REAPER resource path per scenario
+  local p = io.popen("mktemp -d")
+  scenario.resource_path = (p:read("a") or ""):gsub("%s+$", "")
+  p:close()
+
   answers = setup.answers or {}
   answer_at = 0
   log = {}
@@ -132,6 +141,32 @@ check(run("happy path: 4 registered, 4 shortcut dialogs", {
   if reg ~= 4 then return false, "registered " .. reg .. ", expected 4" end
   if dlg ~= 4 then return false, "opened " .. dlg .. " shortcut dialogs, expected 4" end
   return true, "4 registered, 4 dialogs"
+end))
+
+-- the files must physically arrive, and the registration must point AT them
+check(run("files land in REAPER's Scripts folder", {
+  imgui = true, js = true, answers = { 1, 7 },
+}, function(log)
+  local dir = scenario.resource_path .. "/Scripts/steelblue/"
+  local want = {
+    "Live BPM Analyzer.lua", "MIDI notes to project markers.lua",
+    "Rename selected markers.lua", "CopyMarkers.lua",
+    "steelblue_ui.lua", "steelblue_markers.lua",
+  }
+  for _, f in ipairs(want) do
+    local h = io.open(dir .. f, "rb")
+    if not h then return false, "missing after copy: " .. f end
+    local size = #h:read("a")
+    h:close()
+    if size == 0 then return false, "copied empty: " .. f end
+  end
+  -- and the actions must reference the copies, not the disk image
+  for _, e in ipairs(log) do
+    if e.kind == "register" and not e.path:find("/Scripts/steelblue/", 1, true) then
+      return false, "registered from outside the install dir: " .. e.path
+    end
+  end
+  return true, "6 files copied, actions point at the copies"
 end))
 
 -- the last AddRemoveReaScript must commit

@@ -22,9 +22,35 @@ local PLUGINS = {
 local MODULES = { "steelblue_ui.lua", "steelblue_markers.lua" }
 
 local folder = debug.getinfo(1, "S").source:match("@?(.*[/\\])") or ""
+local SEP = package.config:sub(1, 1)
 
 local MB_OK, MB_OKCANCEL, MB_YESNO = 0, 1, 4
 local ID_OK, ID_YES = 1, 6
+
+-- The plugins are copied into REAPER's own Scripts folder and registered from
+-- there, so the disk image can be thrown away afterwards. Registering them
+-- where they happen to sit right now is how you end up with REAPER launching a
+-- file off someone's Desktop months later.
+local function install_dir()
+  return reaper.GetResourcePath() .. SEP .. "Scripts" .. SEP .. "steelblue" .. SEP
+end
+
+local function copy_file(from, to)
+  local src = io.open(from, "rb")
+  if not src then
+    return false
+  end
+  local data = src:read("a")
+  src:close()
+
+  local dst = io.open(to, "wb")
+  if not dst then
+    return false
+  end
+  dst:write(data)
+  dst:close()
+  return true
+end
 
 local function say(message, buttons)
   return reaper.ShowMessageBox(message, TITLE, buttons or MB_OK)
@@ -125,13 +151,45 @@ end
 
 -- ---------------------------------------------------------------- install
 
-local function register_plugins()
+-- Returns the folder the plugins were put in, or nil.
+local function copy_into_reaper()
+  local target = install_dir()
+
+  -- already running from inside the install folder? then there is nothing to do
+  if folder:lower() == target:lower() then
+    return target
+  end
+
+  reaper.RecursiveCreateDirectory(target, 0)
+
+  local failed = {}
+  for _, name in ipairs({ PLUGINS[1].file, PLUGINS[2].file, PLUGINS[3].file, PLUGINS[4].file,
+                          MODULES[1], MODULES[2] }) do
+    if not copy_file(folder .. name, target .. name) then
+      failed[#failed + 1] = name
+    end
+  end
+
+  if #failed > 0 then
+    say(
+      "Could not copy these into REAPER's Scripts folder:\n\n   " ..
+      table.concat(failed, "\n   ") ..
+      "\n\nTarget was:\n" .. target,
+      MB_OK
+    )
+    return nil
+  end
+
+  return target
+end
+
+local function register_plugins(target)
   local section = reaper.SectionFromUniqueID(0)   -- 0 = Main
   local registered = {}
 
   for index, plugin in ipairs(PLUGINS) do
     local last = index == #PLUGINS
-    local cmd = reaper.AddRemoveReaScript(true, 0, folder .. plugin.file, last)
+    local cmd = reaper.AddRemoveReaScript(true, 0, target .. plugin.file, last)
     if cmd and cmd ~= 0 then
       registered[#registered + 1] = { plugin = plugin, cmd = cmd, section = section }
     end
@@ -187,7 +245,7 @@ end
 
 -- ---------------------------------------------------------------- report
 
-local function summary(registered)
+local function summary(registered, target)
   local lines = { "Installed:", "" }
 
   for _, entry in ipairs(registered) do
@@ -196,6 +254,10 @@ local function summary(registered)
   end
 
   lines[#lines + 1] = ""
+  lines[#lines + 1] = "Copied to:"
+  lines[#lines + 1] = "   " .. target
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "The disk image is no longer needed — you can eject and delete it."
   lines[#lines + 1] = "The plugins are in the Action List under their file names."
   lines[#lines + 1] = ""
 
@@ -236,8 +298,9 @@ local function main()
     "   MIDI notes to project markers\n" ..
     "   Rename selected markers\n" ..
     "   Copy Markers\n\n" ..
-    "It will register them as actions and offer to assign shortcuts.\n" ..
-    "Nothing is moved — the plugins run from where this folder is now, so keep it somewhere permanent.\n\n" ..
+    "The plugins are copied into REAPER's own Scripts folder, registered as actions, " ..
+    "and you get the chance to put a shortcut on each.\n\n" ..
+    "Afterwards you can delete the disk image — REAPER will not need it again.\n\n" ..
     "OK = install\nCancel = stop here",
     MB_OKCANCEL
   )
@@ -265,14 +328,19 @@ local function main()
     install_extension("JS_ReaScriptAPI")
   end
 
-  local registered = register_plugins()
+  local target = copy_into_reaper()
+  if not target then
+    return
+  end
+
+  local registered = register_plugins(target)
   if #registered == 0 then
     say("Could not register the plugins as actions. Nothing was changed.", MB_OK)
     return
   end
 
   assign_shortcuts(registered)
-  summary(registered)
+  summary(registered, target)
 end
 
 main()

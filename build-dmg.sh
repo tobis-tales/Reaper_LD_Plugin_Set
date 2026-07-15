@@ -16,10 +16,14 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAME="steelblue LD Plugin Set"
 DMG="$REPO/dist/steelblue-LD-Plugin-Set.dmg"
-STAGE="$(mktemp -d)/$NAME"
+ROOT="$(mktemp -d)/$NAME"
 
-trap 'rm -rf "$(dirname "$STAGE")"' EXIT
+trap 'rm -rf "$(dirname "$ROOT")"' EXIT
 
+# The mounted image shows exactly two things: the note, and one folder.
+# Everything else lives inside that folder — a window full of loose .lua files
+# invites people to double-click one and wonder why nothing happens.
+STAGE="$ROOT/steelblue Plugin Set"
 mkdir -p "$STAGE" "$REPO/dist"
 
 # --- what ships -------------------------------------------------------------
@@ -42,7 +46,7 @@ cp "$REPO/Tutorials/pdf/"*.pdf "$STAGE/Guides (PDF)/"
 
 # --- the note people actually read ------------------------------------------
 
-cat > "$STAGE/START HERE.txt" <<'TXT'
+cat > "$ROOT/READ ME FIRST.txt" <<'TXT'
 steelblue studios — REAPER LD Plugin Set
 ========================================
 
@@ -54,25 +58,28 @@ Four tools for cue programming in REAPER:
    Copy Markers                     copies a block of markers elsewhere
 
 
-INSTALL
--------
+HOW TO INSTALL — one step
+-------------------------
 
-1. Copy this whole folder somewhere permanent — Documents, for example.
-   Not the Desktop, not Downloads: the plugins run from where you put it,
-   so if the folder moves later, REAPER loses them.
+In REAPER:
 
-2. In REAPER:  Actions > Show Action List > New action... > Load ReaScript...
-   Pick  steelblue_install.lua  from this folder and run it.
+   Actions  >  Show Action List  >  New action...  >  Load ReaScript...
 
-3. The installer registers all four plugins and offers to assign keyboard
-   shortcuts. That is the only manual step there is.
+Pick  steelblue_install.lua  from the "steelblue Plugin Set" folder next
+to this note, and run it.
+
+That is it. The installer copies the plugins into REAPER's own Scripts
+folder, registers all four as actions, and lets you assign a keyboard
+shortcut to each. Afterwards you can eject and delete this disk image —
+REAPER will not need it again.
 
 
-BEFORE THAT: TWO EXTENSIONS
----------------------------
+TWO EXTENSIONS ARE NEEDED
+-------------------------
 
-Neither ships with REAPER. The installer checks for both and can place a
-file you have already downloaded.
+Neither of them ships with REAPER. The installer checks for both, explains
+what is missing, and can put a file you have already downloaded in the
+right place.
 
    ReaImGui          needed by all four plugins.
    JS_ReaScriptAPI   needed by "Rename selected markers" to read the order
@@ -80,7 +87,9 @@ file you have already downloaded.
                      silently follows plain timeline order instead.
 
 The easy route for both is ReaPack:  https://reapack.com
-Extensions are only loaded when REAPER starts — restart after installing.
+
+REAPER loads extensions only when it starts. If you install one, restart
+REAPER before expecting it to work.
 
 
 THE ONE THING EVERYBODY TRIPS OVER
@@ -92,19 +101,21 @@ swallows the shortcut: the window never appears, and your marker
 selection gets cleared as well.
 
 
-WHAT ELSE IS IN HERE
---------------------
+WHAT IS IN THE FOLDER
+---------------------
 
-   Tutorials/       one guide per plugin, open index.html
-   Guides (PDF)/    the same guides for printing or mailing
-   Demo Project/    a small REAPER project to practise on:
-                    a beat at exactly 128 BPM, a MIDI item, named markers
+   steelblue_install.lua   the installer — start here
+   Tutorials/              one guide per plugin, open index.html
+   Guides (PDF)/           the same guides for printing or mailing
+   Demo Project/           a small REAPER project to practise on:
+                           a beat at exactly 128 BPM, a MIDI item,
+                           and named markers
 TXT
 
 # --- pack -------------------------------------------------------------------
 
 rm -f "$DMG"
-hdiutil create -volname "$NAME" -srcfolder "$STAGE" -ov -format UDZO -quiet "$DMG"
+hdiutil create -volname "$NAME" -srcfolder "$ROOT" -ov -format UDZO -quiet "$DMG"
 
 echo "built: $DMG"
 echo "  $(du -h "$DMG" | cut -f1)"
