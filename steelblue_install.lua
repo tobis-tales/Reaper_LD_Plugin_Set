@@ -422,6 +422,57 @@ local function summary(registered, target, restart_needed)
   say(table.concat(lines, "\n"), MB_OK)
 end
 
+-- ---------------------------------------------------------------- restart
+
+-- REAPER has no "restart" action — only "File: Quit REAPER" (Main 40004; the
+-- same number means something else entirely in other sections, which is why
+-- this goes through Main_OnCommand).
+--
+-- So: leave a small script behind that waits for REAPER to disappear and then
+-- starts it again. It gives up after a minute and only relaunches if REAPER
+-- really quit — otherwise cancelling the quit dialog would leave a watcher
+-- lurking that reopens REAPER the next time you close it that evening.
+local function offer_restart()
+  if reaper.GetOS() ~= "macOS-arm64" and reaper.GetOS() ~= "OSX64" then
+    return
+  end
+
+  local want = say(
+    "Restart REAPER now?\n\n" ..
+    "An extension was just installed, and REAPER only loads those when it starts. " ..
+    "Until then the plugins will not work.\n\n" ..
+    "Yes = quit and start REAPER again\n" ..
+    "No = I will restart it myself\n\n" ..
+    "If you have unsaved work, REAPER will ask about it as usual.",
+    MB_YESNO
+  )
+  if want ~= ID_YES then
+    return
+  end
+
+  local helper = "/tmp/steelblue_restart.sh"
+  local f = io.open(helper, "w")
+  if not f then
+    say("Could not prepare the restart. Please quit and start REAPER yourself.", MB_OK)
+    return
+  end
+
+  f:write([[#!/bin/sh
+n=0
+while [ $n -lt 60 ]; do
+  pgrep -x REAPER >/dev/null 2>&1 || break
+  sleep 1
+  n=$((n + 1))
+done
+pgrep -x REAPER >/dev/null 2>&1 || open -a REAPER
+rm -f "$0"
+]])
+  f:close()
+
+  reaper.ExecProcess('/bin/sh "' .. helper .. '"', -1)   -- -1 = do not wait
+  reaper.Main_OnCommand(40004, 0)                        -- File: Quit REAPER
+end
+
 -- ---------------------------------------------------------------- main
 
 local function main()
@@ -484,6 +535,10 @@ local function main()
 
   assign_shortcuts(registered)
   summary(registered, target, restart_needed)
+
+  if restart_needed then
+    offer_restart()
+  end
 end
 
 main()

@@ -110,6 +110,7 @@ local function fake()
     return 1
   end
   r.ExecProcess = function(cmd) log[#log + 1] = { kind = "exec", cmd = cmd } return "0\n" end
+  r.Main_OnCommand = function(cmd) log[#log + 1] = { kind = "command", cmd = cmd } end
   return r
 end
 
@@ -327,6 +328,50 @@ check(run("unknown platform falls back to browse", {
   imgui = false, js = false, os = "Win64", answers = { 1, 2, 2, 7 },
 }, function(log)
   return dialogs_matching(log, "If you have already downloaded") ~= nil, "offers the file picker"
+end))
+
+-- --- the restart offer ------------------------------------------------------
+
+local QUIT_REAPER = 40004
+
+-- Quitting someone's REAPER uninvited would be unforgivable, so the important
+-- tests here are the ones where it must NOT happen.
+check(run("nothing installed -> never offers to quit", {
+  imgui = true, js = true, answers = { 1, 7 },
+}, function(log)
+  if count(log, "command") > 0 then return false, "issued a command with nothing to restart for!" end
+  return dialogs_matching(log, "Restart REAPER now") == nil, "no offer, no quit"
+end))
+
+check(run("saying No to the restart does not quit", {
+  imgui = false, js = false, os = "macOS-arm64", answers = { 1, 1, 1, 7, 1, 7 },
+}, function(log)
+  if not dialogs_matching(log, "Restart REAPER now") then return false, "never offered" end
+  for _, e in ipairs(log) do
+    if e.kind == "command" then return false, "quit REAPER anyway!" end
+  end
+  return true, "offered, and took No for an answer"
+end))
+
+check(run("saying Yes quits via the Main-section Quit action", {
+  imgui = false, js = false, os = "macOS-arm64", answers = { 1, 1, 1, 7, 1, 6 },
+}, function(log)
+  local quit = nil
+  for _, e in ipairs(log) do
+    if e.kind == "command" then quit = e.cmd end
+  end
+  if quit ~= QUIT_REAPER then
+    return false, "issued command " .. tostring(quit) .. ", expected " .. QUIT_REAPER
+  end
+  -- the relauncher has to be spawned BEFORE the quit, or nothing brings it back
+  local spawned_at, quit_at
+  for i, e in ipairs(log) do
+    if e.kind == "exec" and e.cmd:find("steelblue_restart") then spawned_at = i end
+    if e.kind == "command" then quit_at = i end
+  end
+  if not spawned_at then return false, "quit without leaving anything to restart it" end
+  if spawned_at > quit_at then return false, "spawned the relauncher after quitting" end
+  return true, "relauncher first, then Quit (40004)"
 end))
 
 -- --- where the installer sits ----------------------------------------------
