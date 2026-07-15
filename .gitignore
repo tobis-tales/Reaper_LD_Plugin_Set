@@ -1,0 +1,5 @@
+.DS_Store
+
+# REAPER regenerates these from the audio
+*.reapeaks
+peaks/
