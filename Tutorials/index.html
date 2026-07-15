@@ -35,25 +35,21 @@
   <a class="card" href="live-bpm-analyzer.html">
     <b>Live BPM Analyzer</b>
     <span>Reads the real tempo out of the audio, to two decimals, and sets the project tempo without moving anything you have already placed.</span>
-    <em>Cmd + Shift + B</em>
   </a>
 
   <a class="card" href="midi-notes-to-project-markers.html">
     <b>MIDI notes to project markers</b>
     <span>Write your cue rhythm as MIDI and get a marker on every note — named after the note, coloured by pitch.</span>
-    <em>Cmd + Shift + H</em>
   </a>
 
   <a class="card" href="rename-selected-markers.html">
     <b>Rename selected markers</b>
     <span>Builds MA-Tools cue names for a whole set of markers at once, with a live preview and cue numbering that wraps.</span>
-    <em>Cmd + Shift + N</em>
   </a>
 
   <a class="card" href="copy-markers.html">
     <b>Copy Markers</b>
     <span>Copies a block of markers somewhere else, keeping spacing, names and colours.</span>
-    <em>Opt + C</em>
   </a>
 
 </div>
@@ -61,14 +57,16 @@
 <h2>Before you start</h2>
 
 <div class="note">
-<p><strong>Two REAPER extensions are needed.</strong> Neither ships with REAPER — the easiest way to get both is ReaPack, but a manual install works just as well.</p>
+<p><strong>Two REAPER extensions are needed — and both are included.</strong> Neither ships with REAPER, so the package carries them for macOS and the installer offers to put the right one in place. Nothing to download.</p>
 <p><strong>ReaImGui</strong> — required by all four plugins. Without it the Live BPM Analyzer refuses to start and the other three fall back to plain system dialogs.</p>
-<p><strong>JS_ReaScriptAPI</strong> — needed by <em>Rename selected markers</em> to read the manager's list order. Without it the cue numbering silently comes out in a different order.</p>
+<p><strong>js_ReaScriptAPI</strong> — needed by <em>Rename selected markers</em> to read the manager's list order. Without it the cue numbering silently comes out in a different order.</p>
+<p>If you already have either of them, the installer leaves it strictly alone — it never overwrites or downgrades what you have. Updates come from ReaPack, as usual.</p>
 </div>
 
 <div class="note">
-<p><strong>Install by running <code>steelblue_install.lua</code> once</strong> — in REAPER, under <kbd>Actions</kbd> → <kbd>Show Action List</kbd> → <kbd>New action…</kbd> → <kbd>Load ReaScript…</kbd>. It checks the extensions, registers all four plugins, and walks you through assigning a shortcut to each.</p>
-<p>REAPER does not let a script set a key binding — it only opens its own dialog for it. So the installer proposes a key and you press it. The shortcuts printed in these guides are those proposals; if you picked something else, yours is the one that counts.</p>
+<p><strong>Install by running <code>steelblue_install.lua</code> once</strong> — in REAPER, under <kbd>Actions</kbd> → <kbd>Show Action List</kbd> → <kbd>New action…</kbd> → <kbd>Load ReaScript…</kbd>. It brings the extensions, copies the plugins into REAPER's own Scripts folder, registers all four as actions, and walks you through putting a shortcut on each.</p>
+<p>REAPER does not let a script set a key binding — it can only open its own dialog for it. So the installer opens that dialog once per plugin and you press whatever keys suit you. These guides therefore say <em>"the shortcut you assigned"</em> rather than naming keys: yours are the only ones that exist.</p>
+<p>Never got round to it? Everything is in <kbd>Actions</kbd> → <kbd>Show Action List</kbd> under the plugin's file name, and runs from there just as well.</p>
 </div>
 
 <div class="note warn">
