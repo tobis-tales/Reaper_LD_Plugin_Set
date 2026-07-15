@@ -18,10 +18,13 @@ ReaImGui — the user interface of all four plugins
    Source:    https://codeberg.org/cfillion/reaimgui
    Files:     macOS/reaper_imgui-arm64.dylib     (Apple Silicon)
               macOS/reaper_imgui-x86_64.dylib    (Intel)
+              Windows/reaper_imgui-x64.dll       (64-bit)
+              Windows/reaper_imgui-x86.dll       (32-bit)
 
    The LGPL requires that the source is available to you: it is at the
    address above, for exactly this version, tagged v0.10.0.5. The binaries
-   here are the author's own official release builds, unmodified.
+   here are the author's own official release builds, unmodified — taken
+   from that release and verified byte-for-byte against it.
 
    The author distributes ReaImGui through ReaPack (ReaTeam Extensions
    repository). That is the better route if you want updates — our copy
@@ -37,11 +40,21 @@ js_ReaScriptAPI — used by "Rename selected markers"
    Source:    https://github.com/juliansader/ReaExtensions
    Files:     macOS/reaper_js_ReaScriptAPI64ARM.dylib  (Apple Silicon)
               macOS/reaper_js_ReaScriptAPI64.dylib     (Intel)
+              Windows/reaper_js_ReaScriptAPI64.dll     (64-bit)
+              Windows/reaper_js_ReaScriptAPI32.dll     (32-bit)
+
+   Taken from the v1.310 folder of the repository above, unmodified, and
+   verified byte-for-byte against it.
 
 
-Windows and Linux
------------------
+WHICH BUILDS ARE IN THIS COPY
+-----------------------------
 
-Only the macOS builds are bundled here, because this package ships as a
-macOS disk image. Both projects publish builds for Windows and Linux at
-the source addresses above.
+The macOS disk image carries only the macOS builds, and the Windows zip
+only the Windows ones — so the folder next to this file has one platform
+in it, not both. Whichever you have, the installer picks the build that
+matches your machine.
+
+Linux is not bundled. Both projects publish Linux builds at the source
+addresses above; the installer can put a file you downloaded yourself
+into the right folder.

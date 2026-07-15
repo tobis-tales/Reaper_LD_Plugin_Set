@@ -33,7 +33,10 @@ local unknown = {}
 for _, name in ipairs(names) do
   local bin = name:match("^ImGui_") and REAIMGUI_DYLIB or REAPER_BIN
   local pattern = name:match("^ImGui_") and ("-API_" .. name) or name
-  local p = io.popen(string.format("strings %q | grep -cx %q", bin, pattern))
+  -- `--` matters: the ImGui pattern starts with "-API_", and without it grep
+  -- reads that as a flag and fails with "Invalid argument" -- which counts as
+  -- zero hits, so every ImGui_* name got reported as a typo it was not.
+  local p = io.popen(string.format("strings %q | grep -cx -- %q", bin, pattern))
   local hits = tonumber(p:read("a")) or 0
   p:close()
   if hits == 0 then
@@ -332,9 +335,59 @@ check(run("does not call a just-installed extension missing", {
   return false, "no summary at all"
 end))
 
--- no bundle for this platform -> fall back to browse-for-file
-check(run("unknown platform falls back to browse", {
-  imgui = false, js = false, os = "Win64", answers = { 1, 2, 2, 7 },
+-- 64-bit Windows: the x64 builds, and only those
+check(run("Windows 64-bit gets the x64 builds", {
+  imgui = false, js = false, os = "Win64", answers = { 1, 1, 1, 7 },
+}, function()
+  local got = extensions_written(scenario)
+  if not got:find("reaper_imgui%-x64%.dll") then return false, "no x64 ReaImGui" end
+  if not got:find("reaper_js_ReaScriptAPI64%.dll") then return false, "no x64 js_ReaScriptAPI" end
+  if got:find("x86%.dll") or got:find("API32") then return false, "wrote a 32-bit build to a 64-bit machine!" end
+  if got:find("dylib") then return false, "wrote a macOS build to a Windows machine!" end
+  return true, "x64 only, as it should be"
+end))
+
+-- 32-bit Windows: the x86 builds, and only those
+check(run("Windows 32-bit gets the x86 builds", {
+  imgui = false, js = false, os = "Win32", answers = { 1, 1, 1, 7 },
+}, function()
+  local got = extensions_written(scenario)
+  if not got:find("reaper_imgui%-x86%.dll") then return false, "no x86 ReaImGui" end
+  if not got:find("reaper_js_ReaScriptAPI32%.dll") then return false, "no x86 js_ReaScriptAPI" end
+  if got:find("x64%.dll") or got:find("API64") then return false, "wrote a 64-bit build to a 32-bit machine!" end
+  return true, "x86 only, as it should be"
+end))
+
+-- Quarantine is a macOS idea and /usr/bin/xattr is a macOS path. Calling it on
+-- Windows would stall for the ExecProcess timeout and achieve nothing.
+check(run("Windows never shells out to xattr or lipo", {
+  imgui = false, js = false, os = "Win64", answers = { 1, 1, 1, 7 },
+}, function(log)
+  for _, e in ipairs(log) do
+    if e.kind == "exec" then
+      return false, "ran a macOS-only tool on Windows: " .. tostring(e.cmd)
+    end
+  end
+  return true, "no shelling out at all"
+end))
+
+-- ...but macOS still must, or REAPER silently ignores the quarantined file.
+check(run("macOS still clears the quarantine flag", {
+  imgui = false, js = false, os = "macOS-arm64", answers = { 1, 1, 1, 7 },
+}, function(log)
+  for _, e in ipairs(log) do
+    if e.kind == "exec" and tostring(e.cmd):find("xattr", 1, true) then
+      return true, "xattr -d com.apple.quarantine ran"
+    end
+  end
+  return false, "never cleared the quarantine flag!"
+end))
+
+-- no bundle for this platform -> fall back to browse-for-file. Linux, because
+-- we genuinely ship no build for it: this scenario used to say "Win64", which
+-- stopped being true the moment the Windows DLLs were bundled.
+check(run("unsupported platform falls back to browse", {
+  imgui = false, js = false, os = "Linux64", answers = { 1, 2, 2, 7 },
 }, function(log)
   return dialogs_matching(log, "If you have already downloaded") ~= nil, "offers the file picker"
 end))
@@ -458,5 +511,17 @@ end, function(log)
   return true, "explains what is missing and where it looked"
 end))
 
-print(fails == 0 and "\nALL PASS" or ("\nFAILURES: " .. fails))
+-- Both halves must be reported, or the summary contradicts the exit code: this
+-- printed "ALL PASS" and exited 1 for an unknown API, which reads as a broken
+-- test rather than the real finding it was.
+if fails > 0 then
+  print("\nFAILURES: " .. fails)
+end
+if #unknown > 0 then
+  print(string.format("\n%d API name(s) not found in the REAPER binary -- see above", #unknown))
+end
+if fails == 0 and #unknown == 0 then
+  print("\nALL PASS")
+end
+
 os.exit((fails == 0 and #unknown == 0) and 0 or 1)

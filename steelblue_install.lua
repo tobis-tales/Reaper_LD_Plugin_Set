@@ -33,6 +33,8 @@ local EXTENSIONS = {
     files = {
       ["macOS-arm64"] = "reaper_imgui-arm64.dylib",
       ["OSX64"] = "reaper_imgui-x86_64.dylib",
+      ["Win64"] = "reaper_imgui-x64.dll",
+      ["Win32"] = "reaper_imgui-x86.dll",
     },
     why = "All four plugins draw their windows with it. Without it the Live BPM Analyzer refuses to start and the others fall back to plain system dialogs.",
   },
@@ -43,10 +45,24 @@ local EXTENSIONS = {
     files = {
       ["macOS-arm64"] = "reaper_js_ReaScriptAPI64ARM.dylib",
       ["OSX64"] = "reaper_js_ReaScriptAPI64.dylib",
+      ["Win64"] = "reaper_js_ReaScriptAPI64.dll",
+      ["Win32"] = "reaper_js_ReaScriptAPI32.dll",
     },
     why = "Only 'Rename selected markers' needs it, to read the order of your selection in the Region/Marker Manager. Without it the cue numbering silently follows plain timeline order instead.",
   },
 }
+
+-- Which subfolder of extensions/ holds this machine's builds. GetOS() returns
+-- "macOS-arm64"/"OSX64" or "Win64"/"Win32"; anything else (Linux) has no
+-- bundled build and falls through to the pick-it-yourself path.
+local PLATFORMS = {
+  ["macOS-arm64"] = "macOS", ["OSX64"] = "macOS",
+  ["Win64"] = "Windows",     ["Win32"] = "Windows",
+}
+
+local function is_windows()
+  return (reaper.GetOS() or ""):sub(1, 3) == "Win"
+end
 
 -- Our plugins are written against the ReaImGui 0.10 API (ImGui_PushFont takes a
 -- size). An older one is worse than none: it is present, so we leave it alone,
@@ -197,23 +213,82 @@ local function place(source_path, file_name)
 
   -- Anything fetched with a browser carries com.apple.quarantine, and REAPER
   -- silently ignores a quarantined extension. Harmless on our own bundled copy.
-  reaper.ExecProcess('/usr/bin/xattr -d com.apple.quarantine "' .. target .. '"', 5000)
+  -- Quarantine is a macOS idea and /usr/bin/xattr is a macOS path: on Windows
+  -- this would just stall for the timeout and achieve nothing.
+  if not is_windows() then
+    reaper.ExecProcess('/usr/bin/xattr -d com.apple.quarantine "' .. target .. '"', 5000)
+  end
   return true
 end
 
 -- The bundled build for this machine, or nil if we do not ship one for it.
 local function bundled_path(ext)
-  local file = ext.files[reaper.GetOS()]
-  if not file then
+  local os_name = reaper.GetOS()
+  local file = ext.files[os_name]
+  local platform = PLATFORMS[os_name]
+  if not file or not platform then
     return nil
   end
 
-  local source = folder .. "extensions" .. SEP .. "macOS" .. SEP .. file
+  local source = folder .. "extensions" .. SEP .. platform .. SEP .. file
   if not reaper.file_exists(source) then
     return nil
   end
 
   return source, file
+end
+
+-- The architecture a Windows DLL was built for, read out of the PE header.
+--
+-- The macOS equivalent shells out to `lipo`; Windows ships no such tool, so we
+-- read the header ourselves. It is a fixed, ancient layout: "MZ" up front, a
+-- little-endian pointer at 0x3C to the "PE\0\0" signature, and the machine word
+-- right behind it. Pure Lua, which means the test harness can check it on a real
+-- DLL without a Windows machine anywhere in sight.
+--
+-- Returns "x64", "x86", "arm64", or nil when the file is not a PE we recognise —
+-- nil means "do not judge", never "wrong".
+local PE_MACHINES = { [0x8664] = "x64", [0x014c] = "x86", [0xAA64] = "arm64" }
+
+local function pe_arch(path)
+  local f = io.open(path, "rb")
+  if not f then
+    return nil
+  end
+
+  local head = f:read(0x40)
+  if not head or #head < 0x40 or head:sub(1, 2) ~= "MZ" then
+    f:close()
+    return nil
+  end
+
+  local b1, b2, b3, b4 = head:byte(0x3D, 0x40)
+  local pe_offset = b1 + b2 * 256 + b3 * 65536 + b4 * 16777216
+
+  if not f:seek("set", pe_offset) then
+    f:close()
+    return nil
+  end
+  local sig = f:read(6)
+  f:close()
+
+  if not sig or #sig < 6 or sig:sub(1, 4) ~= "PE\0\0" then
+    return nil
+  end
+
+  local m1, m2 = sig:byte(5, 6)
+  return PE_MACHINES[m1 + m2 * 256]
+end
+
+-- Same question on macOS, answered by lipo. Returns the arch list as a string,
+-- or nil if lipo told us nothing useful.
+local function macho_archs(path)
+  local out = reaper.ExecProcess('/usr/bin/lipo -archs "' .. path .. '"', 5000)
+  if not out or out == "" then
+    return nil
+  end
+  local archs = (out:match("\n(.*)$") or ""):gsub("%s+$", "")
+  return archs ~= "" and archs or nil
 end
 
 -- Fallback: the user points at a file they downloaded themselves.
@@ -236,19 +311,27 @@ local function install_from_disk(ext)
   end
 
   -- Check the architecture before copying, so nobody spends an evening
-  -- wondering why REAPER quietly ignores a perfectly good file.
-  local arch = reaper.ExecProcess('/usr/bin/lipo -archs "' .. path .. '"', 5000)
-  if arch and arch ~= "" then
-    local archs = (arch:match("\n(.*)$") or ""):gsub("%s+$", "")
-    local want = reaper.GetOS() == "macOS-arm64" and "arm64" or "x86_64"
-    if archs ~= "" and not archs:find(want) then
-      say(
-        "That file is built for '" .. archs .. "', but this machine needs '" .. want .. "'.\n\n" ..
-        "REAPER would ignore it without a word. Nothing was copied.",
-        MB_OK
-      )
-      return false
-    end
+  -- wondering why REAPER quietly ignores a perfectly good file. Both branches
+  -- only object when they positively identified the wrong arch: an unreadable
+  -- header means we say nothing and let the copy proceed.
+  local wrong, want
+  if is_windows() then
+    want = reaper.GetOS() == "Win64" and "x64" or "x86"
+    local arch = pe_arch(path)
+    wrong = (arch and arch ~= want) and arch or nil
+  else
+    want = reaper.GetOS() == "macOS-arm64" and "arm64" or "x86_64"
+    local archs = macho_archs(path)
+    wrong = (archs and not archs:find(want)) and archs or nil
+  end
+
+  if wrong then
+    say(
+      "That file is built for '" .. wrong .. "', but this machine needs '" .. want .. "'.\n\n" ..
+      "REAPER would ignore it without a word. Nothing was copied.",
+      MB_OK
+    )
+    return false
   end
 
   return place(path, file_name_of(path))
