@@ -79,10 +79,18 @@ local function fake()
     return "1.92.1", 19201, scenario.imgui_version or "0.10.0.5"
   end
   r.GetOS = function() return scenario.os or "macOS-arm64" end
+  -- Look at the real filesystem. A fake that answers "sure, it's there" to
+  -- everything is how a test tells you the installer copes with a missing file
+  -- while it has never actually seen one.
   r.file_exists = function(path)
     if scenario.missing_file and path:find(scenario.missing_file, 1, true) then return false end
     if scenario.no_bundled and path:find("/extensions/", 1, true) then return false end
-    return true
+    local h = io.open(path, "rb")
+    if h then
+      h:close()
+      return true
+    end
+    return false
   end
   r.SectionFromUniqueID = function() return "MAIN" end
   r.AddRemoveReaScript = function(add, sec, fn, commit)
@@ -233,7 +241,10 @@ check(run("missing plugin file aborts before registering", {
   imgui = true, js = true, missing_file = "CopyMarkers.lua", answers = { 1 },
 }, function(log)
   if count(log, "register") > 0 then return false, "registered anyway!" end
-  return dialogs_matching(log, "missing next to the installer") ~= nil, "stopped and said what is missing"
+  local text = dialogs_matching(log, "cannot find the plugins")
+  if not text then return false, "aborted without saying why" end
+  if not text:find("CopyMarkers%.lua") then return false, "did not name the missing file" end
+  return true, "stopped and named the missing file"
 end))
 
 -- cancelling at the first dialog changes nothing
@@ -316,6 +327,67 @@ check(run("unknown platform falls back to browse", {
   imgui = false, js = false, os = "Win64", answers = { 1, 2, 2, 7 },
 }, function(log)
   return dialogs_matching(log, "If you have already downloaded") ~= nil, "offers the file picker"
+end))
+
+-- --- where the installer sits ----------------------------------------------
+
+-- On the disk image it lives at the top, with the payload one folder down.
+-- Build that layout for real and run the installer from it.
+local function run_from_layout(name, build, check)
+  local p = io.popen("mktemp -d")
+  local root = (p:read("a") or ""):gsub("%s+$", "")
+  p:close()
+  build(root)
+
+  local q = io.popen("mktemp -d")
+  scenario = { imgui = true, js = true, resource_path = (q:read("a") or ""):gsub("%s+$", "") }
+  q:close()
+
+  answers = { 1, 7 }
+  answer_at = 0
+  log = {}
+  reaper = fake()
+
+  local ok, err = pcall(dofile, root .. "/steelblue_install.lua")
+  if not ok then
+    print(string.format("  FAIL  %-42s error: %s", name, err))
+    return false
+  end
+
+  local passed, detail = check(log)
+  print(string.format("  %s  %-42s %s", passed and "PASS" or "FAIL", name, detail or ""))
+  return passed
+end
+
+print("")
+
+check(run_from_layout("disk-image layout: installer on top", function(root)
+  os.execute(string.format('mkdir -p %q', root .. "/steelblue Plugin Set"))
+  os.execute(string.format('cp %q %q', PKG .. "steelblue_install.lua", root .. "/"))
+  os.execute(string.format('cp %q/*.lua %q/ 2>/dev/null', PKG:sub(1, -2), root .. "/steelblue Plugin Set"))
+  os.execute(string.format('cp -R %q %q/ 2>/dev/null', PKG .. "extensions", root .. "/steelblue Plugin Set"))
+end, function(log)
+  if count(log, "register") ~= 4 then
+    return false, "found nothing: registered " .. count(log, "register")
+  end
+  return true, "found the payload one folder down"
+end))
+
+check(run_from_layout("copied-folder layout: all in one place", function(root)
+  os.execute(string.format('cp %q/*.lua %q/ 2>/dev/null', PKG:sub(1, -2), root))
+  os.execute(string.format('cp -R %q %q/ 2>/dev/null', PKG .. "extensions", root))
+end, function(log)
+  return count(log, "register") == 4, "found the payload next to itself"
+end))
+
+check(run_from_layout("installer dragged out on its own", function(root)
+  os.execute(string.format('cp %q %q/', PKG .. "steelblue_install.lua", root))
+end, function(log)
+  if count(log, "register") > 0 then return false, "registered something out of thin air!" end
+  local text = dialogs_matching(log, "cannot find the plugins")
+  if not text then return false, "failed without saying why" end
+  if not text:find("Looked in") then return false, "did not say where it looked" end
+  return true, "explains what is missing and where it looked"
 end))
 
 print(fails == 0 and "\nALL PASS" or ("\nFAILURES: " .. fails))

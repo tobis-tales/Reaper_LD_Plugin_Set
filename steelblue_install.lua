@@ -52,8 +52,27 @@ local EXTENSIONS = {
 -- and the plugins then misbehave in ways nobody would connect to a version.
 local REAIMGUI_MIN = "0.10"
 
-local folder = debug.getinfo(1, "S").source:match("@?(.*[/\\])") or ""
+local script_dir = debug.getinfo(1, "S").source:match("@?(.*[/\\])") or ""
 local SEP = package.config:sub(1, 1)
+
+-- Where the plugins actually are. Two layouts have to work:
+--   * on the disk image the installer sits at the top, next to the note, and
+--     everything else is one folder down — so people see two items, not twenty
+--   * inside the copied package folder it sits among its own files
+-- Anything else (someone dragging the single .lua out somewhere) has no payload
+-- and must be told, not left to fail on the first missing file.
+local PAYLOAD_SUBFOLDER = "steelblue Plugin Set"
+
+local folder = (function()
+  for _, dir in ipairs({ script_dir, script_dir .. PAYLOAD_SUBFOLDER .. SEP }) do
+    local probe = io.open(dir .. "steelblue_ui.lua", "rb")
+    if probe then
+      probe:close()
+      return dir
+    end
+  end
+  return script_dir
+end)()
 
 local MB_OK, MB_OKCANCEL, MB_YESNO = 0, 1, 4
 local ID_OK, ID_YES = 1, 6
@@ -409,9 +428,11 @@ local function main()
   local missing = missing_files()
   if #missing > 0 then
     say(
-      "These files are missing next to the installer:\n\n   " ..
+      "The installer cannot find the plugins.\n\nMissing:\n\n   " ..
       table.concat(missing, "\n   ") ..
-      "\n\nCopy the whole package folder, not individual files, and run the installer from inside it.",
+      "\n\nLooked in:\n   " .. folder ..
+      "\n\nRun the installer from the disk image, or from the copied package folder — " ..
+      "not on its own. It needs the other files to be with it.",
       MB_OK
     )
     return

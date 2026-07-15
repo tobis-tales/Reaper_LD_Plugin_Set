@@ -46,6 +46,10 @@ cp -R "$REPO/extensions" "$STAGE/extensions"
 mkdir -p "$STAGE/Guides (PDF)"
 cp "$REPO/Tutorials/pdf/"*.pdf "$STAGE/Guides (PDF)/"
 
+# The installer also sits at the top, next to the note: it is the one thing
+# people need to find. It resolves the payload one folder down by itself.
+cp "$REPO/steelblue_install.lua" "$ROOT/"
+
 # --- the note people actually read ------------------------------------------
 
 cat > "$ROOT/READ ME FIRST.txt" <<'TXT'
@@ -67,8 +71,7 @@ In REAPER:
 
    Actions  >  Show Action List  >  New action...  >  Load ReaScript...
 
-Pick  steelblue_install.lua  from the "steelblue Plugin Set" folder next
-to this note, and run it.
+Pick  steelblue_install.lua  — it is right here next to this note.
 
 That is it. The installer copies the plugins into REAPER's own Scripts
 folder, registers all four as actions, and lets you assign a keyboard
