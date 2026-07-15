@@ -2,13 +2,22 @@
 
 ## Project
 
-This workspace contains custom REAPER Lua scripts for Tobias P. under:
+Custom REAPER Lua scripts for Tobias P. — the "steelblue studios" LD plugin set.
 
-- `/Users/tobiaspehla/Desktop/Plugin Factory`
-
-The main delivery/package folder is:
+**The project is this folder, and it is a git repository (since 2026-07-15):**
 
 - `/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket`
+- private remote: `https://github.com/tobis-tales/Reaper_LD_Plugin_Set`
+
+`Plugin Factory` one level up is **Tobi's workbench, not the project** — it also holds unrelated things (TimecodeMaker, ReciepeTagToggle, an old Windows installer, and `X - StickyDrag`, which is a C/Swift project with three git repos of its own). Do not widen the repo to that level: it was tried and git immediately produced broken gitlinks for StickyDrag's nested repos.
+
+Everything the project needs now lives inside the repo: the plugins, `AGENTS.md`, `tests/`, `Demo Project/`, `Tutorials/`.
+
+**Why version control, in one line:** on 2026-07-15 an hour was lost because seven stale copies of the plugins were lying around and REAPER had been launching a day-old file unnoticed. Commit, don't copy.
+
+### Worth knowing about the workbench folder
+
+- **`../ReaperRenameMarkersInstaller/`** — a Windows installer Tobi built for an earlier plugin, bundling ReaPack, JS_ReaScriptAPI (`reaper_js_ReaScriptAPI64.dll`) and SWS. Useful prior art for the planned installer, and its `readme.txt` **confirms the central constraint**: after all that installing, the user still had to open the Action List and "Load ReaScript..." by hand. An external installer cannot register the action — that is exactly the gap the new in-REAPER install script closes. It is outside the repo; pull it in if it becomes a reference.
 
 **This package folder is also what REAPER actually runs** (corrected 2026-07-15 — see below). All four scripts are registered to it in `reaper-kb.ini`.
 
@@ -306,7 +315,7 @@ Current workflow:
 
 Do not reintroduce mirror copies of the plugins. Every duplicate is a file that will silently rot and then get run by accident; that is exactly what happened on 2026-07-15.
 
-### Offline harnesses (scratchpad, 2026-07-15) — use these before touching REAPER
+### Offline harnesses (`tests/`) — use these before touching REAPER
 
 `luac -p` only proves a file compiles. These run the real code:
 
@@ -338,10 +347,10 @@ Two changes survive from that detour, on their own merit rather than as fixes:
 
 ## Demo project + tutorial screenshots (2026-07-15)
 
-- **`Plugin Factory/Demo Project/steelblue_demo.RPP`** — the project the tutorial screenshots are shot in. Generated as a file rather than clicked together (`gen_demo.lua`), so it is exactly reproducible: track BEAT with a **synthetic** 128 BPM drum loop (`steelblue_demo_beat.wav`, also generated), track CUE MIDI, and five named markers (intro/verse/buildup/drop/break). Tobi has since made the MIDI notes a realistic cue pattern rather than one-note-per-beat.
+- **`Demo Project/steelblue_demo.RPP`** — the project the tutorial screenshots are shot in. Generated as a file rather than clicked together (`gen_demo.lua`), so it is exactly reproducible: track BEAT with a **synthetic** 128 BPM drum loop (`steelblue_demo_beat.wav`, also generated), track CUE MIDI, and five named markers (intro/verse/buildup/drop/break). Tobi has since made the MIDI notes a realistic cue pattern rather than one-note-per-beat.
   - **Deliberately no client material.** Tobi's real project (a Vanessa Mai TV edit) has the client name, his licence string and his finished lighting cues on screen — none of that belongs in tutorials that get handed to other people. Running `Rename selected markers` on it would also have overwritten real cues.
   - Nice side effect worth keeping: the analyzer reads **128.00 BPM at 95 %** off the generated beat, which makes the BPM tutorial self-verifying. Could ship as a practice project with the package.
-- **`Plugin Factory/Tutorials/img/`** — 7 screenshots at 3024 px: `bpm-01-analyze`, `copy-01-selection`, `copy-02-result`, `rename-01-selection`, `rename-02-numbering`, `midi-01-window`, `midi-02-result`.
+- **`Tutorials/img/`** — 7 screenshots at 3024 px: `bpm-01-analyze`, `copy-01-selection`, `copy-02-result`, `rename-01-selection`, `rename-02-numbering`, `midi-01-window`, `midi-02-result`.
   - `rename-02-numbering.png` is the good one: 4 markers, "How many cues" = 3 → `Crash(1)`, `Crash(2)`, `Crash(3)`, `Crash(1)`. That is the wrap logic, self-explanatory in one picture.
   - `rename-01-selection.png` shows *unnamed* markers, so the preview reads `(1)[Top]` and the `MarkerName` placeholder does not explain itself. Reshoot with named markers if the tutorial needs it.
 - **Claude cannot save screenshots to disk.** The screenshot tool only returns images into the chat, and `screencapture` from the shell fails: the shell runs under `claude-code/<version>/claude.app`, which is a *separate* TCC client from the granted `Claude.app` (visible as the lowercase `claude.app` entry, switched off, in Screen Recording). So: **Tobi shoots, Claude collects from the Desktop.** Do not spend time re-litigating this.
