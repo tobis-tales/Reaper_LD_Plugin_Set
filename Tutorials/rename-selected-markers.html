@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rename selected markers — steelblue studios</title>
+<link rel="stylesheet" href="steelblue.css">
+</head>
+<body>
+<div class="page">
+
+<header class="brand">
+  <img src="mark.svg" alt="" width="34" height="30">
+  <div class="wordmark"><b>steelblue</b><span>STUDIOS</span></div>
+  <div class="kicker">How to use</div>
+</header>
+
+<h1>Rename selected markers</h1>
+<p class="lede">Builds MA-Tools cue names for a whole set of markers at once, from parts you switch on and off — instead of typing <code>BeatFx(1)[Top]^BeatFx^</code> forty times by hand.</p>
+<div class="shortcut">Suggested shortcut: <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd></div>
+
+<h2>What it is for</h2>
+<p>Your markers arrive from somewhere — you dropped them by ear, or the MIDI plugin created them. Now they need to become cues the timecode trigger understands. This window assembles the syntax for you and applies it to every selected marker in one go, with a live preview so you see the result before you commit.</p>
+
+<h2>Step by step</h2>
+
+<ol class="steps">
+
+<li>
+<h3>Select the markers, then click into the arrange</h3>
+<p>Pick the markers in the <kbd>Region/Marker Manager</kbd>. Then click once in the arrange view.</p>
+<div class="note warn">
+<p><strong>Do not skip that click.</strong> While the Region/Marker Manager has keyboard focus it eats the shortcut — the window will not open, and your selection gets cleared on top of it. One click in the arrange and the shortcut works. Your selection stays; only its highlight fades while the manager is inactive.</p>
+</div>
+</li>
+
+<li>
+<h3>Start the plugin and build the name</h3>
+<p>Press <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd>. Every switch you flip changes the preview at the top immediately.</p>
+<figure>
+  <img src="img/rename-01a-window.png" alt="The Rename selected markers window with the preview field, the syntax switches and the reference list">
+  <figcaption>The preview shows what the first selected marker will be called.</figcaption>
+</figure>
+</li>
+
+<li>
+<h3>Know what <code>MarkerName</code> does</h3>
+<p><code>MarkerName</code> in the cue name field is not a literal name — it is a <strong>placeholder for whatever the marker is already called</strong>. Leave it there and a marker called <em>verse</em> becomes <code>verse(1)[Go]^verse^</code>, while <em>drop</em> becomes <code>drop(1)[Go]^drop^</code>. Each marker keeps its own name inside the new syntax.</p>
+<p>Type an actual word instead — say <code>Crash</code> — and every selected marker gets that same name.</p>
+</li>
+
+<li>
+<h3>Number repeated cues</h3>
+<p>Switch on <strong>Create multiple cues in timeline order</strong> when the same cue is fired several times. <strong>How many cues</strong> sets how far the counter runs before it starts over.</p>
+<figure>
+  <img src="img/rename-02a-window.png" alt="The window with Create multiple cues switched on and How many cues set to 3">
+  <figcaption>Four markers selected, the counter set to 3.</figcaption>
+</figure>
+<figure>
+  <img src="img/rename-02b-manager.png" alt="The manager showing four renamed markers: Crash(1), Crash(2), Crash(3) and Crash(1) again">
+  <figcaption>The counter wraps: 1, 2, 3 — and the fourth marker starts again at 1.</figcaption>
+</figure>
+<p>That wrap is the point of the setting: six markers with the counter at five give you <code>1 2 3 4 5 1</code>, not <code>1 2 3 4 5 6</code>.</p>
+</li>
+
+<li>
+<h3>Rename</h3>
+<p>Click <strong>Rename selected markers</strong>. The status line reports how many were changed. Marker positions and colours stay exactly as they were — only the names change.</p>
+</li>
+
+</ol>
+
+<h2>The syntax, part by part</h2>
+
+<table>
+  <tr><th>Part</th><th>What it does</th></tr>
+  <tr><td><code>MarkerName</code></td><td>Placeholder for the marker's existing name</td></tr>
+  <tr><td>Cue name</td><td>The name of the cue</td></tr>
+  <tr><td><code>(CueNumber)</code></td><td>Cue number — for triggering the same cue repeatedly</td></tr>
+  <tr><td>Multiple</td><td>Counts the cue number up in timeline order, and wraps</td></tr>
+  <tr><td><code>[Cmd]</code></td><td>TC trigger command: <code>Top</code>, <code>On</code>, <code>Off</code>. Default is <code>Go</code></td></tr>
+  <tr><td><code>^Sequence^</code></td><td>Name of the sequence. Only needs to be given once</td></tr>
+</table>
+
+<div class="note">
+<p><strong>One sequence per marker colour.</strong> Colour is how you split cue lists: the default colour (red) is the main cue list, and every other colour generates its own sequence. Colour your markers before renaming, not after.</p>
+</div>
+
+<h2>Good to know</h2>
+
+<h3>Order comes from the manager, not from the timeline</h3>
+<p>The counter follows the order the markers appear in the Region/Marker Manager's list. Sort that list the way you want them numbered before you rename.</p>
+
+<h3>This one really does need JS_ReaScriptAPI</h3>
+<p>Without that extension the plugin cannot read the manager's list and falls back to plain timeline order — so the numbering can come out different from what you expect, without any warning. If you only install one extension besides ReaImGui, make it this one.</p>
+
+<footer>
+  <span>steelblue studios — Rename selected markers</span>
+  <span class="req">Requires ReaImGui and JS_ReaScriptAPI</span>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MIDI notes to project markers — steelblue studios</title>
+<link rel="stylesheet" href="steelblue.css">
+</head>
+<body>
+<div class="page">
+
+<header class="brand">
+  <img src="mark.svg" alt="" width="34" height="30">
+  <div class="wordmark"><b>steelblue</b><span>STUDIOS</span></div>
+  <div class="kicker">How to use</div>
+</header>
+
+<h1>MIDI notes to project markers</h1>
+<p class="lede">Turns every MIDI note into a project marker, named after the note and coloured by pitch — so you can write your cue rhythm as MIDI and get the markers for free.</p>
+<div class="shortcut">Suggested shortcut: <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd></div>
+
+<h2>What it is for</h2>
+<p>Placing cues by ear, one marker at a time, is slow and never quite tight. Playing them in as MIDI is fast, quantises to the grid, and can be edited like music. This plugin takes that MIDI item and puts a marker at the start of every note.</p>
+<p>Each distinct note name gets its own colour, so a kick pattern and a hat pattern are visually separate on the ruler — and since colour is what splits cue lists in MA-Tools, the sequences fall out of that automatically.</p>
+
+<h2>Step by step</h2>
+
+<ol class="steps">
+
+<li>
+<h3>Select the MIDI item</h3>
+<p>Click the item in the arrange view. If you want several, select them all — or skip this and use the whole project in the next step.</p>
+</li>
+
+<li>
+<h3>Start the plugin</h3>
+<p>Press <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd>. The window tells you how many items are currently selected, so you can check before committing.</p>
+<figure>
+  <img src="img/midi-01a-window.png" alt="The MIDI notes to project markers window with MA-Tools syntax switched on and one item selected">
+  <figcaption>The line under the switch previews the naming, and the count at the bottom tells you what you are about to convert.</figcaption>
+</figure>
+</li>
+
+<li>
+<h3>Choose the naming</h3>
+<p><strong>MA-Tools syntax</strong> is on by default: a C4 becomes <code>C4(1)[Top]^C4^</code>, ready to trigger. Switch it off if you just want the plain note name — <code>C4</code> — for example when you intend to run <em>Rename selected markers</em> over them afterwards.</p>
+<p>If the track has custom MIDI note names, those are used instead of the pitch. Name your notes <em>KickStart</em> and <em>Hihat</em> in REAPER and the markers arrive already carrying those names.</p>
+</li>
+
+<li>
+<h3>Choose the scope</h3>
+<table>
+  <tr><td><strong>All MIDI items in the project</strong></td><td>Every MIDI item, regardless of selection.</td></tr>
+  <tr><td><strong>Only selected MIDI items</strong></td><td>Just what you picked in step 1.</td></tr>
+</table>
+<figure>
+  <img src="img/midi-02b-manager.png" alt="The manager listing the created markers, each named after its note in MA-Tools syntax">
+  <figcaption>Markers created — one per note, named after the note, each note name in its own colour.</figcaption>
+</figure>
+</li>
+
+</ol>
+
+<h2>Good to know</h2>
+
+<h3>Looped items are followed</h3>
+<p>If the item loops its source, markers are created for every repetition you can see — across the item's full visible length, not just the first pass.</p>
+
+<h3>It warns before flooding your project</h3>
+<p>Above 2000 markers the plugin counts first and asks whether you really want them. A dense 16th-note pattern over a whole song adds up quickly, and undoing several thousand markers is no fun.</p>
+
+<h3>Markers land on note starts</h3>
+<p>Note length is ignored — only the start matters, which is what a cue trigger needs. So write your cue rhythm with short notes; it makes the MIDI easier to read without changing the result.</p>
+
+<footer>
+  <span>steelblue studios — MIDI notes to project markers</span>
+  <span class="req">Requires ReaImGui</span>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Live BPM Analyzer — steelblue studios</title>
+<link rel="stylesheet" href="steelblue.css">
+</head>
+<body>
+<div class="page">
+
+<header class="brand">
+  <img src="mark.svg" alt="" width="34" height="30">
+  <div class="wordmark"><b>steelblue</b><span>STUDIOS</span></div>
+  <div class="kicker">How to use</div>
+</header>
+
+<h1>Live BPM Analyzer</h1>
+<p class="lede">Reads the real tempo of a finished song from the audio itself, to two decimal places — and sets the project tempo to it without shifting anything you have already placed.</p>
+<div class="shortcut">Suggested shortcut: <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd></div>
+
+<h2>What it is for</h2>
+<p>Your grid has to sit on the track, or every cue you place drifts. The tempo printed on a release, or reported by a DJ tool, is usually rounded to a whole number — and a TV edit is often time-compressed by a fraction of a percent on top of that. Half a BPM out over three minutes is several beats of drift by the end.</p>
+<p>This reads the tempo out of the waveform and gives you the actual figure.</p>
+
+<h2>Step by step</h2>
+
+<ol class="steps">
+
+<li>
+<h3>Select the song item</h3>
+<p>Click the audio item in the arrange view. If nothing is selected, the plugin looks for the item under the play cursor.</p>
+</li>
+
+<li>
+<h3>Start the plugin</h3>
+<p>Press <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd>. It starts reading immediately, updating as playback runs.</p>
+<figure>
+  <img src="img/bpm-01-analyze.png" alt="The Live BPM Analyzer window reading 128.00 BPM at 95 percent confidence next to the audio item in the arrange">
+  <figcaption>Reading a song at 128 BPM. The bar under the number is the confidence.</figcaption>
+</figure>
+</li>
+
+<li>
+<h3>Press Precision analyze for the real answer</h3>
+<p>Live mode looks at a short rolling window and is meant for a quick glance while the track plays. <strong>Precision analyze</strong> takes up to two minutes of audio out of the middle of the song — skipping intro and outro, where the beat is least reliable — and measures across it.</p>
+<p>Live updating switches itself off afterwards, so the result stays on screen instead of being overwritten a moment later.</p>
+</li>
+
+<li>
+<h3>Set project tempo</h3>
+<p>This is safe to press on a project you have already worked in: every item's position, length and playrate is preserved. Nothing gets stretched or dragged along by the tempo change.</p>
+</li>
+
+</ol>
+
+<h2>Reading the numbers</h2>
+
+<h3>Confidence</h3>
+<p>Confidence answers "how sure am I about <em>this number</em>", not "is there music playing". It rewards a clear, steady pulse that stays put over minutes. Roughly:</p>
+<table>
+  <tr><td><strong>Above 70 %</strong></td><td>A solid, steady beat. Trust the figure.</td></tr>
+  <tr><td><strong>40–70 %</strong></td><td>Usable, but check it against the grid before you build on it.</td></tr>
+  <tr><td><strong>Under 30 %</strong></td><td>There is no reliable pulse here — a rubato passage, an ambient bed, or a section with no drums. The number is a guess.</td></tr>
+</table>
+<p>A produced track with vocals and pads typically lands around 80 %; a bare drum loop goes over 90 %. Noise and free-tempo material sit under 10 %, which is the point of the scale.</p>
+
+<h3>Half and Double</h3>
+<p>Every piece of music is equally "correct" at half and at double its tempo — 65 and 130 describe the same grid, just counted differently. The analyzer picks the musically likely reading, but for half-time material it may land an octave off. <strong>Half</strong> and <strong>Double</strong> are there to correct that in one click, and they keep every decimal place.</p>
+<p>When a half or double reading is genuinely almost as strong, a line appears under the status telling you so. If that line stays away, the reading is unambiguous.</p>
+
+<h3>Raw versus displayed</h3>
+<p>The big figure is smoothed over the last few measurements; <strong>Raw</strong> is the latest one on its own. When the two drift apart while a track plays, the tempo itself is moving — a live recording, or a hand-played edit.</p>
+
+<h2>Good to know</h2>
+
+<h3>Window seconds, Min and Max BPM</h3>
+<p>Leave these alone unless you have a reason. Narrowing Min/Max around a tempo you already suspect helps on difficult material — set 120 to 140 if you know it is house-ish, and the octave question disappears by itself.</p>
+
+<h3>What "130" on the label usually means</h3>
+<p>It usually means "about 130". If your grid drifts on a track that is supposedly a round number, measure it: released material sitting at 130.97 rather than 130.00 is entirely normal, and that difference is worth about seven beats of drift over three minutes.</p>
+
+<footer>
+  <span>steelblue studios — Live BPM Analyzer</span>
+  <span class="req">Requires ReaImGui</span>
+</footer>
+
+</div>
+</body>
+</html>

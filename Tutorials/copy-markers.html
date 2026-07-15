@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Copy Markers — steelblue studios</title>
+<link rel="stylesheet" href="steelblue.css">
+</head>
+<body>
+<div class="page">
+
+<header class="brand">
+  <img src="mark.svg" alt="" width="34" height="30">
+  <div class="wordmark"><b>steelblue</b><span>STUDIOS</span></div>
+  <div class="kicker">How to use</div>
+</header>
+
+<h1>Copy Markers</h1>
+<p class="lede">Copies a set of markers to another position on the timeline — keeping their spacing, their names and their colours.</p>
+<div class="shortcut">Suggested shortcut: <kbd>Opt</kbd> + <kbd>C</kbd></div>
+
+<h2>What it is for</h2>
+<p>You have programmed a block of cues — say a chorus — and the same block comes back later in the song. Instead of rebuilding it, select those markers once and drop a copy wherever you need it. The distances between them stay exactly as they were.</p>
+
+<h2>Step by step</h2>
+
+<ol class="steps">
+
+<li>
+<h3>Select the markers in the Region/Marker Manager</h3>
+<p>Open it with <kbd>View</kbd> → <kbd>Region/Marker Manager</kbd>, then click the markers you want. Shift-click for a range, Cmd-click to pick individual ones. Regions in the selection are ignored — only markers are copied.</p>
+<figure>
+  <img src="img/copy-01b-manager.png" alt="The Region/Marker Manager list with the markers verse, buildup and drop highlighted">
+  <figcaption>Three markers selected: verse, buildup, drop. The marker <em>break</em> below stays untouched.</figcaption>
+</figure>
+</li>
+
+<li>
+<h3>Click once into the arrange</h3>
+<div class="note warn">
+<p><strong>This step is easy to miss.</strong> As long as the Region/Marker Manager has keyboard focus, it swallows the shortcut: the window will not appear, and your marker selection gets cleared. Click anywhere in the arrange view first, then press the shortcut.</p>
+<p>Your selection survives that click — only the blue highlight fades, because macOS dims it while the manager is not the active window. The plugin still reads it correctly.</p>
+</div>
+</li>
+
+<li>
+<h3>Start the plugin</h3>
+<p>Press <kbd>Opt</kbd> + <kbd>C</kbd>. The window shows how many markers are selected, and where your edit cursor currently sits, in bars and in timecode.</p>
+<p>You can leave the window open while you work: change the selection in the manager or move the edit cursor, and the display follows.</p>
+<figure>
+  <img src="img/copy-01a-window.png" alt="The Copy Markers window: 3 markers selected, edit cursor at measure 19.3.00, target position fields and four copy buttons">
+  <figcaption>The count at the top is read live — it follows what you do in the manager.</figcaption>
+</figure>
+</li>
+
+<li>
+<h3>Choose where the copy should go</h3>
+<p>There are three ways, and you can use whichever fits the moment:</p>
+<table>
+  <tr><td><strong>Copy to cursor</strong></td><td>Copies to wherever the edit cursor is right now — the fastest way. Move the cursor, hit the button.</td></tr>
+  <tr><td><strong>Copy to measure.beats</strong></td><td>For a musical position: type something like <code>19.3.00</code>.</td></tr>
+  <tr><td><strong>Copy to hh:mm:ss:ff</strong></td><td>For a timecode position: type something like <code>00:00:34:20</code>.</td></tr>
+</table>
+<p><strong>Refresh from cursor</strong> fills both fields with the current cursor position, so you can nudge the value from there instead of typing it out.</p>
+</li>
+
+<li>
+<h3>Copy</h3>
+<p>The status line at the bottom confirms what happened. The copies carry the original names and colours.</p>
+<figure>
+  <img src="img/copy-02a-window.png" alt="The Copy Markers window with a green status line reading 3 markers copied">
+  <figcaption>Green means done.</figcaption>
+</figure>
+<figure>
+  <img src="img/copy-02b-manager.png" alt="The manager now lists the original five markers plus three copies named intro, verse and buildup further along">
+  <figcaption>The copies M6–M8 arrived at bar 14, 16 and 18 — two bars apart, exactly like the originals at 1, 3 and 5.</figcaption>
+</figure>
+</li>
+
+</ol>
+
+<h2>Good to know</h2>
+
+<h3>Spacing is measured from the earliest marker</h3>
+<p>The first of your selected markers — the earliest one on the timeline, not the first one you clicked — lands exactly on the target position. Everything else keeps its distance to it. So the block arrives as a block.</p>
+
+<h3>The selection is read from the manager, not from the arrange</h3>
+<p>Markers you clicked in the arrange view are not the same selection as the manager's list. If the manager is closed, the plugin falls back to the arrange selection and says so in the window.</p>
+
+<h3>It does not need JS_ReaScriptAPI</h3>
+<p>On REAPER 7.62 and newer, Copy Markers works without that extension. It sorts by timeline position anyway, so it never needs to know in which order you clicked. (Rename selected markers does need it — that one cares about your click order.)</p>
+
+<footer>
+  <span>steelblue studios — Copy Markers</span>
+  <span class="req">Requires ReaImGui</span>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>REAPER LD Plugin Set — steelblue studios</title>
+<link rel="stylesheet" href="steelblue.css">
+<style>
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 8px 0 0; }
+  .card {
+    display: block; padding: 18px 20px; border: 1px solid var(--sb-line);
+    border-radius: 6px; text-decoration: none; color: inherit; background: var(--sb-paper);
+  }
+  .card:hover { border-color: var(--sb-blue); background: var(--sb-blue-wash); }
+  .card b { display: block; font-size: 17px; margin-bottom: 4px; }
+  .card span { display: block; font-size: 14px; color: var(--sb-ink-soft); line-height: 1.5; }
+  .card em { display: block; margin-top: 10px; font-size: 12px; color: var(--sb-blue-dark); font-style: normal; }
+  @media print { .cards { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="brand">
+  <img src="mark.svg" alt="" width="34" height="30">
+  <div class="wordmark"><b>steelblue</b><span>STUDIOS</span></div>
+  <div class="kicker">REAPER LD Plugin Set</div>
+</header>
+
+<h1>Four tools for cue programming in REAPER</h1>
+<p class="lede">Built for lighting designers who write their timecode cues as markers. Each guide is one page — what the plugin is for, how to use it, and the things that are easy to trip over.</p>
+
+<h2>The plugins</h2>
+<div class="cards">
+
+  <a class="card" href="live-bpm-analyzer.html">
+    <b>Live BPM Analyzer</b>
+    <span>Reads the real tempo out of the audio, to two decimals, and sets the project tempo without moving anything you have already placed.</span>
+    <em>Cmd + Shift + B</em>
+  </a>
+
+  <a class="card" href="midi-notes-to-project-markers.html">
+    <b>MIDI notes to project markers</b>
+    <span>Write your cue rhythm as MIDI and get a marker on every note — named after the note, coloured by pitch.</span>
+    <em>Cmd + Shift + H</em>
+  </a>
+
+  <a class="card" href="rename-selected-markers.html">
+    <b>Rename selected markers</b>
+    <span>Builds MA-Tools cue names for a whole set of markers at once, with a live preview and cue numbering that wraps.</span>
+    <em>Cmd + Shift + N</em>
+  </a>
+
+  <a class="card" href="copy-markers.html">
+    <b>Copy Markers</b>
+    <span>Copies a block of markers somewhere else, keeping spacing, names and colours.</span>
+    <em>Opt + C</em>
+  </a>
+
+</div>
+
+<h2>Before you start</h2>
+
+<div class="note">
+<p><strong>Two REAPER extensions are needed.</strong> Neither ships with REAPER — the easiest way to get both is ReaPack, but a manual install works just as well.</p>
+<p><strong>ReaImGui</strong> — required by all four plugins. Without it the Live BPM Analyzer refuses to start and the other three fall back to plain system dialogs.</p>
+<p><strong>JS_ReaScriptAPI</strong> — needed by <em>Rename selected markers</em> to read the manager's list order. Without it the cue numbering silently comes out in a different order.</p>
+</div>
+
+<div class="note">
+<p><strong>The plugins arrive without keyboard shortcuts.</strong> They are registered as actions, and REAPER does not hand out key bindings by itself. Assign your own under <kbd>Actions</kbd> → <kbd>Show Action List</kbd> → find the script → <kbd>Add…</kbd>. Until then, run them straight from the Action List.</p>
+<p>The shortcuts printed in these guides are the ones steelblue uses — treat them as a suggestion, not as something that is already set up on your machine.</p>
+</div>
+
+<div class="note warn">
+<p><strong>The one thing everybody trips over:</strong> before starting a marker plugin from a shortcut, click once into the arrange view. While the Region/Marker Manager has keyboard focus it swallows the shortcut — the window never appears, and your selection is cleared for good measure.</p>
+</div>
+
+<h2>Try it out</h2>
+<p>The <code>Demo Project</code> folder next to these guides contains a small REAPER project — a beat at exactly 128 BPM, a MIDI item, and five named markers — so you can follow every step here without touching a real show file.</p>
+
+<footer>
+  <span>steelblue studios — REAPER LD Plugin Set</span>
+  <span class="req">Requires REAPER 7 · tested on macOS</span>
+</footer>
+
+</div>
+</body>
+</html>
