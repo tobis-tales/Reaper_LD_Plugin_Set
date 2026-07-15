@@ -21,6 +21,37 @@ local PLUGINS = {
 -- Shipped alongside the plugins; without them the plugins refuse to start.
 local MODULES = { "steelblue_ui.lua", "steelblue_markers.lua" }
 
+-- Bundled third-party extensions, per architecture. See extensions/NOTICE.txt:
+-- ReaImGui is LGPL-3.0, js_ReaScriptAPI is MIT, both are shipped unmodified and
+-- only ever written when nothing is installed — never over someone's own copy.
+local EXTENSIONS = {
+  {
+    name = "ReaImGui",
+    api = "ImGui_CreateContext",
+    version = "0.10.0.5",
+    files = {
+      ["macOS-arm64"] = "reaper_imgui-arm64.dylib",
+      ["OSX64"] = "reaper_imgui-x86_64.dylib",
+    },
+    why = "All four plugins draw their windows with it. Without it the Live BPM Analyzer refuses to start and the others fall back to plain system dialogs.",
+  },
+  {
+    name = "js_ReaScriptAPI",
+    api = "JS_Window_ArrayFind",
+    version = "1.310",
+    files = {
+      ["macOS-arm64"] = "reaper_js_ReaScriptAPI64ARM.dylib",
+      ["OSX64"] = "reaper_js_ReaScriptAPI64.dylib",
+    },
+    why = "Only 'Rename selected markers' needs it, to read the order of your selection in the Region/Marker Manager. Without it the cue numbering silently follows plain timeline order instead.",
+  },
+}
+
+-- Our plugins are written against the ReaImGui 0.10 API (ImGui_PushFont takes a
+-- size). An older one is worse than none: it is present, so we leave it alone,
+-- and the plugins then misbehave in ways nobody would connect to a version.
+local REAIMGUI_MIN = "0.10"
+
 local folder = debug.getinfo(1, "S").source:match("@?(.*[/\\])") or ""
 local SEP = package.config:sub(1, 1)
 
@@ -84,6 +115,42 @@ local function has_js_api()
   return reaper.APIExists and reaper.APIExists("JS_Window_ArrayFind")
 end
 
+local function version_at_least(have, want)
+  local function parts(v)
+    local out = {}
+    for n in tostring(v):gmatch("%d+") do out[#out + 1] = tonumber(n) end
+    return out
+  end
+
+  local a, b = parts(have), parts(want)
+  for i = 1, math.max(#a, #b) do
+    local x, y = a[i] or 0, b[i] or 0
+    if x ~= y then
+      return x > y
+    end
+  end
+  return true
+end
+
+-- Someone with an OLDER ReaImGui is the awkward case: it is present, so we
+-- leave it alone as promised, and the plugins then misbehave in ways nobody
+-- would trace back to a version number. So say it plainly.
+local function reaimgui_too_old()
+  if not has_reaimgui() then
+    return false, nil
+  end
+  if not reaper.APIExists("ImGui_GetVersion") then
+    return false, nil
+  end
+
+  local ok, _, _, installed = pcall(reaper.ImGui_GetVersion)
+  if not ok or not installed or installed == "" then
+    return false, nil
+  end
+
+  return not version_at_least(installed, REAIMGUI_MIN), installed
+end
+
 -- ---------------------------------------------------------------- extensions
 
 -- Extensions are not redistributed with this package: the user downloads the
@@ -99,54 +166,105 @@ local function file_name_of(path)
   return path:match("([^/\\]+)$") or path
 end
 
--- A file fetched with a browser carries com.apple.quarantine, and REAPER will
--- refuse to load a quarantined extension. Copying via the shell lets us strip
--- it in the same breath.
-local function install_extension(what)
+local function place(source_path, file_name)
+  local target = user_plugins_dir() .. file_name
+  reaper.RecursiveCreateDirectory(user_plugins_dir(), 0)
+
+  if not copy_file(source_path, target) then
+    say("Could not write to:\n" .. target, MB_OK)
+    return false
+  end
+
+  -- Anything fetched with a browser carries com.apple.quarantine, and REAPER
+  -- silently ignores a quarantined extension. Harmless on our own bundled copy.
+  reaper.ExecProcess('/usr/bin/xattr -d com.apple.quarantine "' .. target .. '"', 5000)
+  return true
+end
+
+-- The bundled build for this machine, or nil if we do not ship one for it.
+local function bundled_path(ext)
+  local file = ext.files[reaper.GetOS()]
+  if not file then
+    return nil
+  end
+
+  local source = folder .. "extensions" .. SEP .. "macOS" .. SEP .. file
+  if not reaper.file_exists(source) then
+    return nil
+  end
+
+  return source, file
+end
+
+-- Fallback: the user points at a file they downloaded themselves.
+local function install_from_disk(ext)
   local ok = say(
-    what .. " is not installed.\n\n" ..
-    "If you have already downloaded it, I can put it in the right folder for you.\n\n" ..
-    "OK = pick the downloaded file\nCancel = skip",
+    ext.name .. " is not installed.\n\n" .. ext.why .. "\n\n" ..
+    "This package does not include a build for your system, so you will need it from " ..
+    "the author — the easiest route is ReaPack (reapack.com).\n\n" ..
+    "If you have already downloaded it, I can put it in the right folder.\n\n" ..
+    "OK = pick the file\nCancel = skip",
     MB_OKCANCEL
   )
   if ok ~= ID_OK then
     return false
   end
 
-  local picked, path = reaper.GetUserFileNameForRead("", "Select the downloaded " .. what .. " file", "")
+  local picked, path = reaper.GetUserFileNameForRead("", "Select the downloaded " .. ext.name .. " file", "")
   if not picked then
     return false
   end
 
-  local target = user_plugins_dir() .. file_name_of(path)
-  reaper.RecursiveCreateDirectory(user_plugins_dir(), 0)
-
-  -- verify the architecture before copying, so nobody spends an evening
-  -- wondering why REAPER silently ignores a perfectly good file
+  -- Check the architecture before copying, so nobody spends an evening
+  -- wondering why REAPER quietly ignores a perfectly good file.
   local arch = reaper.ExecProcess('/usr/bin/lipo -archs "' .. path .. '"', 5000)
   if arch and arch ~= "" then
-    local archs = arch:match("\n(.*)$") or ""
-    archs = archs:gsub("%s+$", "")
-    if archs ~= "" and not archs:find("arm64") and not archs:find("x86_64") then
-      say("That file does not look like a REAPER extension for this machine.\n\nlipo reports: " .. archs, MB_OK)
+    local archs = (arch:match("\n(.*)$") or ""):gsub("%s+$", "")
+    local want = reaper.GetOS() == "macOS-arm64" and "arm64" or "x86_64"
+    if archs ~= "" and not archs:find(want) then
+      say(
+        "That file is built for '" .. archs .. "', but this machine needs '" .. want .. "'.\n\n" ..
+        "REAPER would ignore it without a word. Nothing was copied.",
+        MB_OK
+      )
       return false
     end
   end
 
-  local copied = reaper.ExecProcess('/bin/cp "' .. path .. '" "' .. target .. '"', 10000)
-  if not copied then
-    say("Could not copy the file to:\n" .. target, MB_OK)
-    return false
+  return place(path, file_name_of(path))
+end
+
+-- Returns: ok, placed_something.
+-- Whatever happens, the user must always learn that it is missing and what that
+-- costs them — never just get asked for a file out of nowhere.
+local function ensure_extension(ext)
+  if reaper.APIExists and reaper.APIExists(ext.api) then
+    return true, false      -- present: leave it strictly alone
   end
 
-  reaper.ExecProcess('/usr/bin/xattr -d com.apple.quarantine "' .. target .. '"', 5000)
+  local source, file = bundled_path(ext)
+  if not source then
+    return install_from_disk(ext), false
+  end
 
-  say(
-    file_name_of(path) .. " was copied to:\n" .. user_plugins_dir() .. "\n\n" ..
-    "REAPER only loads extensions at startup — you have to restart REAPER before it takes effect.",
-    MB_OK
+  local wanted = say(
+    ext.name .. " is not installed.\n\n" .. ext.why .. "\n\n" ..
+    "Version " .. ext.version .. " is included with this package — I can install it now.\n\n" ..
+    "It is the author's own unmodified build, shipped under its own licence " ..
+    "(see extensions/NOTICE.txt). Updates come through ReaPack; this copy will not " ..
+    "update itself, and it is never written over a copy you already have.\n\n" ..
+    "OK = install it\nCancel = I will get it myself",
+    MB_OKCANCEL
   )
-  return true
+  if wanted ~= ID_OK then
+    return false, false
+  end
+
+  if place(source, file) then
+    return true, true       -- placed: REAPER must restart before it loads
+  end
+
+  return false, false
 end
 
 -- ---------------------------------------------------------------- install
@@ -245,7 +363,7 @@ end
 
 -- ---------------------------------------------------------------- report
 
-local function summary(registered, target)
+local function summary(registered, target, restart_needed)
   local lines = { "Installed:", "" }
 
   for _, entry in ipairs(registered) do
@@ -261,14 +379,21 @@ local function summary(registered, target)
   lines[#lines + 1] = "The plugins are in the Action List under their file names."
   lines[#lines + 1] = ""
 
-  if not has_reaimgui() then
-    lines[#lines + 1] = "! ReaImGui is still missing — restart REAPER if you just installed it."
-  end
-  if not has_js_api() then
-    lines[#lines + 1] = "! JS_ReaScriptAPI is still missing — Rename selected markers will number cues in the wrong order without it."
-  end
-  if has_reaimgui() and has_js_api() then
-    lines[#lines + 1] = "Both required extensions are present. You are ready to go."
+  -- An extension placed a minute ago is not loaded yet: REAPER reads UserPlugins
+  -- only at startup, so APIExists still says no. Do not report that as a failure.
+  if restart_needed then
+    lines[#lines + 1] = ">> RESTART REAPER NOW. <<"
+    lines[#lines + 1] = "An extension was just installed, and REAPER only loads those when it starts."
+    lines[#lines + 1] = "The plugins will not work until you have restarted."
+  elseif has_reaimgui() and has_js_api() then
+    lines[#lines + 1] = "Both extensions are present. You are ready to go."
+  else
+    if not has_reaimgui() then
+      lines[#lines + 1] = "! ReaImGui is missing — all four plugins need it. Get it via ReaPack (reapack.com)."
+    end
+    if not has_js_api() then
+      lines[#lines + 1] = "! js_ReaScriptAPI is missing — Rename selected markers will number cues in plain timeline order without it."
+    end
   end
 
   lines[#lines + 1] = ""
@@ -308,24 +433,21 @@ local function main()
     return
   end
 
-  if not has_reaimgui() then
+  local old, installed_version = reaimgui_too_old()
+  if old then
     say(
-      "ReaImGui is required by all four plugins and is not installed.\n\n" ..
-      "It does not ship with REAPER. The easiest route is ReaPack (reapack.com), " ..
-      "or download reaper_imgui for your system and let me place it.",
+      "Your ReaImGui is version " .. tostring(installed_version) .. ".\n\n" ..
+      "These plugins need " .. REAIMGUI_MIN .. " or newer, and will look wrong on an older one.\n\n" ..
+      "I will not overwrite an extension you already have. Please update ReaImGui — through " ..
+      "ReaPack (Extensions > ReaPack > Synchronize Packages), or from codeberg.org/cfillion/reaimgui.",
       MB_OK
     )
-    install_extension("ReaImGui")
   end
 
-  if not has_js_api() then
-    say(
-      "JS_ReaScriptAPI is not installed.\n\n" ..
-      "Only 'Rename selected markers' needs it — to read the order of your selection in the " ..
-      "Region/Marker Manager. Without it, cue numbering silently follows plain timeline order instead.",
-      MB_OK
-    )
-    install_extension("JS_ReaScriptAPI")
+  local restart_needed = false
+  for _, ext in ipairs(EXTENSIONS) do
+    local _, placed = ensure_extension(ext)
+    restart_needed = restart_needed or placed
   end
 
   local target = copy_into_reaper()
@@ -340,7 +462,7 @@ local function main()
   end
 
   assign_shortcuts(registered)
-  summary(registered, target)
+  summary(registered, target, restart_needed)
 end
 
 main()

@@ -25,9 +25,15 @@ table.sort(names)
 
 print(string.format("installer calls %d distinct reaper.* functions", #names))
 
+-- ImGui_* names live in the ReaImGui extension, not in REAPER itself, so look
+-- there too before calling a name a typo.
+local REAIMGUI_DYLIB = PKG .. "extensions/macOS/reaper_imgui-arm64.dylib"
+
 local unknown = {}
 for _, name in ipairs(names) do
-  local p = io.popen(string.format("strings %q | grep -cx %q", REAPER_BIN, name))
+  local bin = name:match("^ImGui_") and REAIMGUI_DYLIB or REAPER_BIN
+  local pattern = name:match("^ImGui_") and ("-API_" .. name) or name
+  local p = io.popen(string.format("strings %q | grep -cx %q", bin, pattern))
   local hits = tonumber(p:read("a")) or 0
   p:close()
   if hits == 0 then
@@ -66,10 +72,16 @@ local function fake()
   r.APIExists = function(name)
     if name == "ImGui_CreateContext" then return scenario.imgui end
     if name == "JS_Window_ArrayFind" then return scenario.js end
+    if name == "ImGui_GetVersion" then return scenario.imgui end
     return true
   end
+  r.ImGui_GetVersion = function()
+    return "1.92.1", 19201, scenario.imgui_version or "0.10.0.5"
+  end
+  r.GetOS = function() return scenario.os or "macOS-arm64" end
   r.file_exists = function(path)
     if scenario.missing_file and path:find(scenario.missing_file, 1, true) then return false end
+    if scenario.no_bundled and path:find("/extensions/", 1, true) then return false end
     return true
   end
   r.SectionFromUniqueID = function() return "MAIN" end
@@ -194,22 +206,25 @@ check(run("existing shortcut is left alone", {
   return count(log, "shortcut_dialog") == 0, "no dialog for already-bound actions"
 end))
 
--- ReaImGui missing -> must be told
-check(run("missing ReaImGui is reported", {
-  imgui = false, js = true, answers = { 1, 2, 7 },
+-- declined the offer -> the summary must still warn, not stay silent
+check(run("declining ReaImGui still warns in the summary", {
+  imgui = false, js = true, no_bundled = true, answers = { 1, 2, 7 },
 }, function(log)
-  local said = dialogs_matching(log, "ReaImGui is required")
-  local warned = dialogs_matching(log, "ReaImGui is still missing")
-  return said ~= nil and warned ~= nil, "warned up front and in the summary"
+  local offered = dialogs_matching(log, "ReaImGui is not installed")
+  local warned = dialogs_matching(log, "ReaImGui is missing")
+  if not offered then return false, "never offered to install it" end
+  if not warned then return false, "summary stayed quiet about it" end
+  return true, "offered, and warned again at the end"
 end))
 
--- JS missing -> must explain the real consequence, not just "missing"
-check(run("missing JS_ReaScriptAPI explains the consequence", {
-  imgui = true, js = false, answers = { 1, 2, 7 },
+-- the point is not "it is missing" but what that costs you
+check(run("missing js_ReaScriptAPI explains the consequence", {
+  imgui = true, js = false, no_bundled = true, answers = { 1, 2, 7 },
 }, function(log)
-  local text = dialogs_matching(log, "JS_ReaScriptAPI is not installed")
+  local text = dialogs_matching(log, "js_ReaScriptAPI is not installed")
   if not text then return false, "never mentioned" end
   if not text:find("Rename selected markers") then return false, "did not say which plugin is affected" end
+  if not text:find("timeline order") then return false, "did not say what actually goes wrong" end
   return true, "names the plugin and the effect"
 end))
 
@@ -226,6 +241,81 @@ check(run("cancel at the welcome does nothing", {
   imgui = true, js = true, answers = { 2 },
 }, function(log)
   return count(log, "register") == 0 and count(log, "exec") == 0, "no side effects"
+end))
+
+-- --- bundled extensions ----------------------------------------------------
+
+local function extensions_written(scen)
+  local dir = scen.resource_path .. "/UserPlugins/"
+  local p = io.popen(string.format("ls %q 2>/dev/null", dir))
+  local out = p:read("a") or ""
+  p:close()
+  return out
+end
+
+-- Apple Silicon: the arm64 builds, and only those
+check(run("Apple Silicon gets the arm64 builds", {
+  imgui = false, js = false, os = "macOS-arm64", answers = { 1, 1, 1, 7 },
+}, function()
+  local got = extensions_written(scenario)
+  if not got:find("reaper_imgui%-arm64%.dylib") then return false, "no arm64 ReaImGui" end
+  if not got:find("reaper_js_ReaScriptAPI64ARM%.dylib") then return false, "no arm64 js_ReaScriptAPI" end
+  if got:find("x86_64") then return false, "wrote an Intel build to an Apple Silicon machine!" end
+  return true, "arm64 only, as it should be"
+end))
+
+-- Intel: the x86_64 builds, and only those
+check(run("Intel Mac gets the x86_64 builds", {
+  imgui = false, js = false, os = "OSX64", answers = { 1, 1, 1, 7 },
+}, function()
+  local got = extensions_written(scenario)
+  if not got:find("reaper_imgui%-x86_64%.dylib") then return false, "no Intel ReaImGui" end
+  if not got:find("reaper_js_ReaScriptAPI64%.dylib") then return false, "no Intel js_ReaScriptAPI" end
+  if got:find("arm64") then return false, "wrote an Apple Silicon build to an Intel machine!" end
+  return true, "x86_64 only, as it should be"
+end))
+
+-- the promise that matters: never touch an extension that is already there
+check(run("never overwrites an installed extension", {
+  imgui = true, js = true, os = "macOS-arm64", answers = { 1, 7 },
+}, function()
+  local got = extensions_written(scenario)
+  if got:find("dylib") then return false, "wrote an extension even though both were present!" end
+  return true, "nothing written, as promised"
+end))
+
+-- an older ReaImGui must be called out, not silently tolerated
+check(run("an older ReaImGui is called out by version", {
+  imgui = true, js = true, imgui_version = "0.9.3", answers = { 1, 7 },
+}, function(log)
+  local text = dialogs_matching(log, "Your ReaImGui is version")
+  if not text then return false, "said nothing about the old version" end
+  if not text:find("0%.9%.3") then return false, "did not name the version found" end
+  if not text:find("not overwrite") then return false, "did not explain why it leaves it alone" end
+  return true, "names 0.9.3 and explains it will not touch it"
+end))
+
+check(run("a current ReaImGui is not complained about", {
+  imgui = true, js = true, imgui_version = "0.10.0.5", answers = { 1, 7 },
+}, function(log)
+  return dialogs_matching(log, "Your ReaImGui is version") == nil, "stays quiet"
+end))
+
+-- freshly placed extension: must demand a restart, not report failure
+check(run("after placing an extension it demands a restart", {
+  imgui = false, js = false, os = "macOS-arm64", answers = { 1, 1, 1, 7 },
+}, function(log)
+  local text = dialogs_matching(log, "RESTART REAPER NOW")
+  if not text then return false, "never asked for a restart" end
+  if text:find("ReaImGui is missing") then return false, "reported it as missing right after installing it" end
+  return true, "asks for a restart instead of crying wolf"
+end))
+
+-- no bundle for this platform -> fall back to browse-for-file
+check(run("unknown platform falls back to browse", {
+  imgui = false, js = false, os = "Win64", answers = { 1, 2, 2, 7 },
+}, function(log)
+  return dialogs_matching(log, "If you have already downloaded") ~= nil, "offers the file picker"
 end))
 
 print(fails == 0 and "\nALL PASS" or ("\nFAILURES: " .. fails))

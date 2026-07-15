@@ -1,0 +1,47 @@
+Third-party REAPER extensions bundled with the steelblue LD Plugin Set
+======================================================================
+
+These two extensions are NOT ours. We ship them unmodified, as a
+convenience, so that the plugins work without a separate download.
+
+The installer only ever writes them if the extension is not already
+present. It will never overwrite or downgrade one you already have —
+if you manage them through ReaPack, ReaPack stays in charge.
+
+
+ReaImGui — the user interface of all four plugins
+-------------------------------------------------
+
+   Version:   0.10.0.5 (16 April 2026)
+   Author:    Christian Fillion (cfillion)
+   Licence:   LGPL-3.0-or-later  →  LICENSE-ReaImGui-LGPL-3.0.txt
+   Source:    https://codeberg.org/cfillion/reaimgui
+   Files:     macOS/reaper_imgui-arm64.dylib     (Apple Silicon)
+              macOS/reaper_imgui-x86_64.dylib    (Intel)
+
+   The LGPL requires that the source is available to you: it is at the
+   address above, for exactly this version, tagged v0.10.0.5. The binaries
+   here are the author's own official release builds, unmodified.
+
+   The author distributes ReaImGui through ReaPack (ReaTeam Extensions
+   repository). That is the better route if you want updates — our copy
+   is frozen at the version above and will not update itself.
+
+
+js_ReaScriptAPI — used by "Rename selected markers"
+---------------------------------------------------
+
+   Version:   1.310
+   Author:    Julian Sader
+   Licence:   MIT  →  LICENSE-js_ReaScriptAPI-MIT.txt
+   Source:    https://github.com/juliansader/ReaExtensions
+   Files:     macOS/reaper_js_ReaScriptAPI64ARM.dylib  (Apple Silicon)
+              macOS/reaper_js_ReaScriptAPI64.dylib     (Intel)
+
+
+Windows and Linux
+-----------------
+
+Only the macOS builds are bundled here, because this package ships as a
+macOS disk image. Both projects publish builds for Windows and Linux at
+the source addresses above.

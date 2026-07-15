@@ -41,6 +41,8 @@ rm -rf "$STAGE/Tutorials/pdf"          # the HTML guides are the ones to read on
 cp -R "$REPO/Demo Project" "$STAGE/Demo Project"
 rm -rf "$STAGE/Demo Project/peaks"
 
+cp -R "$REPO/extensions" "$STAGE/extensions"
+
 mkdir -p "$STAGE/Guides (PDF)"
 cp "$REPO/Tutorials/pdf/"*.pdf "$STAGE/Guides (PDF)/"
 
@@ -74,22 +76,28 @@ shortcut to each. Afterwards you can eject and delete this disk image —
 REAPER will not need it again.
 
 
-TWO EXTENSIONS ARE NEEDED
--------------------------
-
-Neither of them ships with REAPER. The installer checks for both, explains
-what is missing, and can put a file you have already downloaded in the
-right place.
+TWO EXTENSIONS ARE NEEDED — AND THEY ARE INCLUDED
+-------------------------------------------------
 
    ReaImGui          needed by all four plugins.
-   JS_ReaScriptAPI   needed by "Rename selected markers" to read the order
+   js_ReaScriptAPI   needed by "Rename selected markers" to read the order
                      of your selection. Without it the cue numbering
                      silently follows plain timeline order instead.
 
-The easy route for both is ReaPack:  https://reapack.com
+Neither ships with REAPER, so both are bundled here for macOS (Apple
+Silicon and Intel). The installer picks the right build for your machine
+and offers to install it — nothing is downloaded.
 
-REAPER loads extensions only when it starts. If you install one, restart
-REAPER before expecting it to work.
+If you already have one of them, the installer leaves it strictly alone.
+It never overwrites or downgrades what you have; if you manage extensions
+through ReaPack, ReaPack stays in charge.
+
+They are the authors' own unmodified builds, shipped under their own
+licences. See  steelblue Plugin Set/extensions/NOTICE.txt  for versions,
+licences and where the source lives.
+
+REAPER loads extensions only when it starts. If the installer places one,
+it will tell you to restart — the plugins will not work before you do.
 
 
 THE ONE THING EVERYBODY TRIPS OVER
