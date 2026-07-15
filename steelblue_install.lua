@@ -2,8 +2,9 @@
 -- One-time installer for the steelblue REAPER LD Plugin Set.
 --
 -- Run once: Actions > Show Action List > New action... > Load ReaScript...
--- pick this file, then run it. It registers the four plugins as actions and
--- offers to put a keyboard shortcut on each.
+-- pick this file, then run it. It installs the bundled extensions if they are
+-- missing, copies the plugins into REAPER's own Scripts folder, registers all
+-- four as actions, and walks the user through putting a shortcut on each.
 --
 -- Deliberately built with plain REAPER dialogs, NOT with steelblue_ui.lua:
 -- this script exists for the case where ReaImGui is missing, so it cannot
@@ -12,10 +13,10 @@
 local TITLE = "steelblue Plugin Set — Installer"
 
 local PLUGINS = {
-  { file = "Live BPM Analyzer.lua",             name = "Live BPM Analyzer",             suggested = "Cmd+Shift+B" },
-  { file = "MIDI notes to project markers.lua", name = "MIDI notes to project markers", suggested = "Cmd+Shift+H" },
-  { file = "Rename selected markers.lua",       name = "Rename selected markers",       suggested = "Cmd+Shift+N" },
-  { file = "CopyMarkers.lua",                   name = "Copy Markers",                  suggested = "Opt+C" },
+  { file = "Live BPM Analyzer.lua",             name = "Live BPM Analyzer" },
+  { file = "MIDI notes to project markers.lua", name = "MIDI notes to project markers" },
+  { file = "Rename selected markers.lua",       name = "Rename selected markers" },
+  { file = "CopyMarkers.lua",                   name = "Copy Markers" },
 }
 
 -- Shipped alongside the plugins; without them the plugins refuse to start.
@@ -172,10 +173,10 @@ end
 
 -- ---------------------------------------------------------------- extensions
 
--- Extensions are not redistributed with this package: the user downloads the
--- build for their own machine, and the installer only puts it in the right
--- place. That keeps us clear of ReaImGui's LGPL obligations and of shipping an
--- arm64 binary to someone on Intel or Windows.
+-- Both extensions ARE shipped with the package (extensions/macOS/), unmodified
+-- and under their own licences — see extensions/NOTICE.txt. Only macOS builds:
+-- this ships as a disk image. If we have no build for the machine, the user can
+-- still point at one they downloaded themselves.
 local function user_plugins_dir()
   local sep = package.config:sub(1, 1)
   return reaper.GetResourcePath() .. sep .. "UserPlugins" .. sep
