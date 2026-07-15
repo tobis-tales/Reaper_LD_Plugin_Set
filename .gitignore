@@ -6,3 +6,6 @@ peaks/
 
 # built by build-dmg.sh, rebuildable at any time
 dist/
+
+# video build intermediates (slides, per-scene clips) — rebuildable
+Tutorials/video/work/
