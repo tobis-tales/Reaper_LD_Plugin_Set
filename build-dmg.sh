@@ -100,7 +100,8 @@ licences. See  steelblue Plugin Set/extensions/NOTICE.txt  for versions,
 licences and where the source lives.
 
 REAPER loads extensions only when it starts. If the installer places one,
-it will tell you to restart — the plugins will not work before you do.
+it will offer to quit REAPER for you — open it again and everything is
+there.
 
 
 THE ONE THING EVERYBODY TRIPS OVER

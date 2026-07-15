@@ -355,13 +355,8 @@ local function assign_shortcuts(registered)
   local wanted = say(
     "Assign keyboard shortcuts now?\n\n" ..
     "REAPER cannot be given a shortcut by a script — it has to be typed into its own dialog.\n" ..
-    "I will open that dialog once per plugin; press the keys you want, then confirm.\n\n" ..
-    "steelblue uses:\n" ..
-    "   Cmd+Shift+B    Live BPM Analyzer\n" ..
-    "   Cmd+Shift+H    MIDI notes to project markers\n" ..
-    "   Cmd+Shift+N    Rename selected markers\n" ..
-    "   Opt+C          Copy Markers\n\n" ..
-    "Yes = assign them now\nNo = skip (you can do it later in the Action List)",
+    "I will open that dialog once per plugin; press whatever keys you want, then confirm.\n\n" ..
+    "Yes = go through them now\nNo = skip (you can do it any time in the Action List)",
     MB_YESNO
   )
   if wanted ~= ID_YES then
@@ -371,8 +366,8 @@ local function assign_shortcuts(registered)
   for _, entry in ipairs(registered) do
     if not shortcut_of(entry) then
       say(
-        entry.plugin.name .. "\n\nSuggested: " .. entry.plugin.suggested ..
-        "\n\nThe shortcut dialog opens next — press the keys you want, then click OK in it.",
+        entry.plugin.name .. "\n\n" ..
+        "The shortcut dialog opens next — press the keys you want, then click OK in it.",
         MB_OK
       )
       reaper.DoActionShortcutDialog(0, entry.section, entry.cmd, -1)
@@ -399,11 +394,10 @@ local function summary(registered, target, restart_needed)
   lines[#lines + 1] = ""
 
   -- An extension placed a minute ago is not loaded yet: REAPER reads UserPlugins
-  -- only at startup, so APIExists still says no. Do not report that as a failure.
+  -- only at startup, so APIExists still says no. Do not report that as a failure
+  -- — and do not explain the restart here either, the quit dialog does that next.
   if restart_needed then
-    lines[#lines + 1] = ">> RESTART REAPER NOW. <<"
-    lines[#lines + 1] = "An extension was just installed, and REAPER only loads those when it starts."
-    lines[#lines + 1] = "The plugins will not work until you have restarted."
+    lines[#lines + 1] = "An extension was installed as well — see the next window."
   elseif has_reaimgui() and has_js_api() then
     lines[#lines + 1] = "Both extensions are present. You are ready to go."
   else
@@ -422,27 +416,26 @@ local function summary(registered, target, restart_needed)
   say(table.concat(lines, "\n"), MB_OK)
 end
 
--- ---------------------------------------------------------------- restart
+-- ---------------------------------------------------------------- quit
 
--- REAPER has no "restart" action — only "File: Quit REAPER" (Main 40004; the
--- same number means something else entirely in other sections, which is why
--- this goes through Main_OnCommand).
+-- It offers to QUIT, not to restart, and that wording is the whole point.
 --
--- So: leave a small script behind that waits for REAPER to disappear and then
--- starts it again. It gives up after a minute and only relaunches if REAPER
--- really quit — otherwise cancelling the quit dialog would leave a watcher
--- lurking that reopens REAPER the next time you close it that evening.
-local function offer_restart()
-  if reaper.GetOS() ~= "macOS-arm64" and reaper.GetOS() ~= "OSX64" then
-    return
-  end
-
+-- REAPER has no restart action, only "File: Quit REAPER" (Main 40004 — the same
+-- number is something else entirely in other sections, hence Main_OnCommand). A
+-- restart was built and tried on 2026-07-15: REAPER quit, and nothing brought it
+-- back. The helper script ran fine to its last line and survives an empty PATH,
+-- so the relaunch seems to collide with REAPER's own shutdown.
+--
+-- Quitting, on the other hand, works every time. So offer that: a button that
+-- promises a restart and only delivers half of it looks broken, while one that
+-- says "quit" and quits is simply doing its job.
+local function offer_quit()
   local want = say(
-    "Restart REAPER now?\n\n" ..
-    "An extension was just installed, and REAPER only loads those when it starts. " ..
-    "Until then the plugins will not work.\n\n" ..
-    "Yes = quit and start REAPER again\n" ..
-    "No = I will restart it myself\n\n" ..
+    "Quit REAPER now?\n\n" ..
+    "An extension was just installed. REAPER only loads those when it starts, so the " ..
+    "plugins will work the moment you open REAPER again — but not before.\n\n" ..
+    "Yes = quit now\n" ..
+    "No = I will close it myself later\n\n" ..
     "If you have unsaved work, REAPER will ask about it as usual.",
     MB_YESNO
   )
@@ -450,27 +443,7 @@ local function offer_restart()
     return
   end
 
-  local helper = "/tmp/steelblue_restart.sh"
-  local f = io.open(helper, "w")
-  if not f then
-    say("Could not prepare the restart. Please quit and start REAPER yourself.", MB_OK)
-    return
-  end
-
-  f:write([[#!/bin/sh
-n=0
-while [ $n -lt 60 ]; do
-  pgrep -x REAPER >/dev/null 2>&1 || break
-  sleep 1
-  n=$((n + 1))
-done
-pgrep -x REAPER >/dev/null 2>&1 || open -a REAPER
-rm -f "$0"
-]])
-  f:close()
-
-  reaper.ExecProcess('/bin/sh "' .. helper .. '"', -1)   -- -1 = do not wait
-  reaper.Main_OnCommand(40004, 0)                        -- File: Quit REAPER
+  reaper.Main_OnCommand(40004, 0)   -- File: Quit REAPER
 end
 
 -- ---------------------------------------------------------------- main
@@ -537,7 +510,7 @@ local function main()
   summary(registered, target, restart_needed)
 
   if restart_needed then
-    offer_restart()
+    offer_quit()
   end
 end
 

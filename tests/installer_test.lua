@@ -313,14 +313,23 @@ check(run("a current ReaImGui is not complained about", {
   return dialogs_matching(log, "Your ReaImGui is version") == nil, "stays quiet"
 end))
 
--- freshly placed extension: must demand a restart, not report failure
-check(run("after placing an extension it demands a restart", {
-  imgui = false, js = false, os = "macOS-arm64", answers = { 1, 1, 1, 7 },
+-- A just-placed extension is not loaded yet, so APIExists still says no. The
+-- summary must not report that as "missing" — it just installed the thing.
+check(run("does not call a just-installed extension missing", {
+  imgui = false, js = false, os = "macOS-arm64", answers = { 1, 1, 1, 7, 1, 7 },
 }, function(log)
-  local text = dialogs_matching(log, "RESTART REAPER NOW")
-  if not text then return false, "never asked for a restart" end
-  if text:find("ReaImGui is missing") then return false, "reported it as missing right after installing it" end
-  return true, "asks for a restart instead of crying wolf"
+  for _, e in ipairs(log) do
+    if e.kind == "dialog" and e.text:find("Installed:") then
+      if e.text:find("ReaImGui is missing") then
+        return false, "reported ReaImGui as missing right after installing it"
+      end
+      if e.text:find("js_ReaScriptAPI is missing") then
+        return false, "reported js_ReaScriptAPI as missing right after installing it"
+      end
+      return true, "summary stays quiet, the quit window explains"
+    end
+  end
+  return false, "no summary at all"
 end))
 
 -- no bundle for this platform -> fall back to browse-for-file
@@ -339,14 +348,14 @@ local QUIT_REAPER = 40004
 check(run("nothing installed -> never offers to quit", {
   imgui = true, js = true, answers = { 1, 7 },
 }, function(log)
-  if count(log, "command") > 0 then return false, "issued a command with nothing to restart for!" end
-  return dialogs_matching(log, "Restart REAPER now") == nil, "no offer, no quit"
+  if count(log, "command") > 0 then return false, "issued a command with nothing to quit for!" end
+  return dialogs_matching(log, "Quit REAPER now") == nil, "no offer, no quit"
 end))
 
-check(run("saying No to the restart does not quit", {
+check(run("saying No to the quit does not quit", {
   imgui = false, js = false, os = "macOS-arm64", answers = { 1, 1, 1, 7, 1, 7 },
 }, function(log)
-  if not dialogs_matching(log, "Restart REAPER now") then return false, "never offered" end
+  if not dialogs_matching(log, "Quit REAPER now") then return false, "never offered" end
   for _, e in ipairs(log) do
     if e.kind == "command" then return false, "quit REAPER anyway!" end
   end
@@ -360,18 +369,32 @@ check(run("saying Yes quits via the Main-section Quit action", {
   for _, e in ipairs(log) do
     if e.kind == "command" then quit = e.cmd end
   end
-  if quit ~= QUIT_REAPER then
-    return false, "issued command " .. tostring(quit) .. ", expected " .. QUIT_REAPER
+  return quit == QUIT_REAPER,
+    quit == QUIT_REAPER and "Quit REAPER (40004), nothing else"
+    or ("issued command " .. tostring(quit) .. ", expected " .. QUIT_REAPER)
+end))
+
+-- it must never promise a restart it cannot deliver
+check(run("never promises a restart", {
+  imgui = false, js = false, os = "macOS-arm64", answers = { 1, 1, 1, 7, 1, 7 },
+}, function(log)
+  for _, e in ipairs(log) do
+    if e.kind == "dialog" and e.text:lower():find("restart") then
+      return false, "still says 'restart' somewhere: " .. e.text:sub(1, 40)
+    end
   end
-  -- the relauncher has to be spawned BEFORE the quit, or nothing brings it back
-  local spawned_at, quit_at
-  for i, e in ipairs(log) do
-    if e.kind == "exec" and e.cmd:find("steelblue_restart") then spawned_at = i end
-    if e.kind == "command" then quit_at = i end
+  return true, "says quit, does quit"
+end))
+
+-- the summary and the quit dialog must not both explain the same thing
+check(run("the restart hint is not said twice", {
+  imgui = false, js = false, os = "macOS-arm64", answers = { 1, 1, 1, 7, 1, 7 },
+}, function(log)
+  local n = 0
+  for _, e in ipairs(log) do
+    if e.kind == "dialog" and e.text:find("only loads those when it starts") then n = n + 1 end
   end
-  if not spawned_at then return false, "quit without leaving anything to restart it" end
-  if spawned_at > quit_at then return false, "spawned the relauncher after quitting" end
-  return true, "relauncher first, then Quit (40004)"
+  return n == 1, n .. " window(s) explain the startup thing — exactly one should"
 end))
 
 -- --- where the installer sits ----------------------------------------------
