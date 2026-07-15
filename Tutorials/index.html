@@ -54,27 +54,43 @@
 
 </div>
 
-<h2>Before you start</h2>
+<h2>Installing</h2>
+<p>One script does the whole job. It takes about a minute.</p>
 
-<div class="note">
-<p><strong>Two REAPER extensions are needed — and both are included.</strong> Neither ships with REAPER, so the package carries them for macOS and the installer offers to put the right one in place. Nothing to download.</p>
-<p><strong>ReaImGui</strong> — required by all four plugins. Without it the Live BPM Analyzer refuses to start and the other three fall back to plain system dialogs.</p>
-<p><strong>js_ReaScriptAPI</strong> — needed by <em>Rename selected markers</em> to read the manager's list order. Without it the cue numbering silently comes out in a different order.</p>
-<p>If you already have either of them, the installer leaves it strictly alone — it never overwrites or downgrades what you have. Updates come from ReaPack, as usual.</p>
-</div>
+<ol class="steps">
 
-<div class="note">
-<p><strong>Install by running <code>steelblue_install.lua</code> once</strong> — in REAPER, under <kbd>Actions</kbd> → <kbd>Show Action List</kbd> → <kbd>New action…</kbd> → <kbd>Load ReaScript…</kbd>. It brings the extensions, copies the plugins into REAPER's own Scripts folder, registers all four as actions, and walks you through putting a shortcut on each.</p>
-<p>REAPER does not let a script set a key binding — it can only open its own dialog for it. So the installer opens that dialog once per plugin and you press whatever keys suit you. These guides therefore say <em>"the shortcut you assigned"</em> rather than naming keys: yours are the only ones that exist.</p>
-<p>Never got round to it? Everything is in <kbd>Actions</kbd> → <kbd>Show Action List</kbd> under the plugin's file name, and runs from there just as well.</p>
-</div>
+<li>
+<h3>Open the disk image and start the installer</h3>
+<p>In REAPER: <kbd>Actions</kbd> → <kbd>Show Action List</kbd> → <kbd>New action…</kbd> → <kbd>Load ReaScript…</kbd>, then pick <code>steelblue_install.lua</code> from the disk image and run it.</p>
+<p>That is the only fiddly bit, and it only happens once.</p>
+</li>
+
+<li>
+<h3>Let it install the two extensions</h3>
+<p>REAPER needs <strong>ReaImGui</strong> for the plugin windows, and <strong>js_ReaScriptAPI</strong> for the cue numbering in <em>Rename selected markers</em>. Neither ships with REAPER — so both are in the package, and the installer puts the right build for your Mac in place. Nothing to download.</p>
+<p>Already have one of them? It is left strictly alone. The installer never overwrites or downgrades what you have; if ReaPack manages your extensions, ReaPack stays in charge.</p>
+</li>
+
+<li>
+<h3>Give each plugin a shortcut</h3>
+<p>The installer opens REAPER's shortcut dialog once per plugin. Press whatever keys suit you — a script is not allowed to set a key binding, it can only open that dialog, so the choice is genuinely yours.</p>
+<p>Skipping is fine. Everything also runs from <kbd>Actions</kbd> → <kbd>Show Action List</kbd> under the plugin's file name, and you can add shortcuts there whenever you like.</p>
+</li>
+
+<li>
+<h3>Quit REAPER, then open it again</h3>
+<p>The installer offers to quit for you. REAPER only loads extensions when it starts, so the plugins come alive the moment you reopen it — not before.</p>
+<p>After that the disk image has done its work: the plugins live in REAPER's own Scripts folder now, so you can eject and delete it.</p>
+</li>
+
+</ol>
 
 <div class="note warn">
 <p><strong>The one thing everybody trips over:</strong> before starting a marker plugin from a shortcut, click once into the arrange view. While the Region/Marker Manager has keyboard focus it swallows the shortcut — the window never appears, and your selection is cleared for good measure.</p>
 </div>
 
 <h2>Try it out</h2>
-<p>The <code>Demo Project</code> folder next to these guides contains a small REAPER project — a beat at exactly 128 BPM, a MIDI item, and five named markers — so you can follow every step here without touching a real show file.</p>
+<p>The <code>Demo Project</code> folder in the package contains a small REAPER project — a beat at exactly 128 BPM, a MIDI item, and five named markers — so you can follow every step in these guides without touching a real show file.</p>
 
 <footer>
   <span>steelblue studios — REAPER LD Plugin Set</span>
