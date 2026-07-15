@@ -360,13 +360,41 @@ Two changes survive from that detour, on their own merit rather than as fixes:
 - **The Region/Marker Manager swallows the script shortcut.** With focus in the manager, `Opt+C` did not open Copy Markers *and* cleared the marker selection — while still starting the script invisibly in the background (REAPER then reports "CopyMarkers.lua is running in background" on the next try). Click into the arrange first. **This belongs in the tutorials.**
 - Clicking into the arrange does **not** lose the manager's selection — only its highlight, which macOS dims while the manager is unfocused. The plugin keeps reading it correctly.
 
+## The installer (2026-07-15)
+
+`steelblue_install.lua` runs **inside REAPER**; `build-dmg.sh` wraps the folder into `dist/steelblue-LD-Plugin-Set.dmg`. The .dmg is only packaging — the install itself has to happen in-process, because `AddRemoveReaScript` exists only there. Verified prior art: Tobi's old `ReaperRenameMarkersInstaller` was an .exe that installed the extensions and still had to tell users to "Load ReaScript..." by hand. That gap is the installer's whole reason to exist.
+
+It uses plain `ShowMessageBox` / `GetUserInputs`, **never `steelblue_ui.lua`** — it exists for the case where ReaImGui is missing, so it cannot draw itself with ReaImGui.
+
+### The shortcut API, and its one limitation
+
+REAPER has **no way to set a key binding from a script**. What exists:
+
+| API | |
+| --- | --- |
+| `SectionFromUniqueID(0)` | the Main section |
+| `AddRemoveReaScript(add, sectionID, scriptfn, commit)` | registers — **returns the new command ID**. `commit=false` for all but the last call |
+| `CountActionShortcuts(section, cmd)` | is a key already bound? |
+| `DoActionShortcutDialog(hwnd, section, cmd, -1)` | opens REAPER's own dialog; the **user** presses the keys |
+| `GetActionShortcutDesc(section, cmd, idx, ...)` | read back what they chose |
+| `DeleteActionShortcut(section, cmd, idx)` | |
+
+So the installer proposes a key and opens the dialog. **The tutorials must keep saying "suggested shortcut"** — the user types it and may well pick something else. The printed shortcuts are Tobi's own bindings.
+
+### Extensions are placed, not shipped
+
+The user downloads ReaImGui / JS_ReaScriptAPI themselves; the installer only moves the file into `UserPlugins/`. That sidesteps ReaImGui's LGPL obligations, sidesteps JS_ReaScriptAPI's unclear licence, and sidesteps the architecture trap (the dylibs here are **arm64 only**). Handled on the way: `lipo -archs` sanity check before copying, `xattr -d com.apple.quarantine` after (a browser-downloaded extension is quarantined and REAPER silently refuses it), and a clear "restart REAPER" — extensions load only at startup.
+
+### Testing it
+
+`tests/installer_test.lua` runs the installer against a fake REAPER: 8 flow scenarios (all four registered, exactly one `commit=true`, declining shortcuts, not nagging about existing ones, both missing-extension paths, an incomplete copy aborting before it touches anything, cancel doing nothing). It also greps every `reaper.*` name out of the installer and checks each against the REAPER binary — a typo there would otherwise surface halfway through a stranger's install.
+
 ## Open Priorities
 
-1. **Build the four HTML tutorials** from `Tutorials/img/`, in the steelblue design, then print them to PDF with headless Chrome (`--headless --print-to-pdf`, Chrome is installed) so one source yields both outputs. Needs a print stylesheet. Content that must appear: click into the arrange before using a marker plugin's shortcut; the `MarkerName` placeholder; the cue-number wrap (1 2 3 1).
-2. **Installer.** Agreed shape: a `.dmg` as the wrapper (familiar, professional) containing the package folder plus **one install script that runs inside REAPER**. The install logic must not be an external .app/.exe: registering the plugins as actions needs `AddRemoveReaScript` from inside REAPER, and the alternative — editing `reaper-kb.ini` from outside — means operating on the file holding every one of the user's shortcuts, with REAPER forced closed. The installer cannot use `steelblue_ui.lua` for its own UI (it exists for the case where ReaImGui is missing), so plain REAPER dialogs.
-   - First screen names the real requirements: **ReaImGui** (all four plugins) and **JS_ReaScriptAPI** (Rename's cue order). **ReaPack is not a requirement** — it is one convenient way to install those two; Tobi's own machine has neither via ReaPack, the dylibs simply sit in `UserPlugins`.
-   - Tobi's idea, and a good one: let users point the installer at dylibs they downloaded themselves. That sidesteps both redistribution (ReaImGui is LGPL v3; JS_ReaScriptAPI's licence could not be determined from the files on disk and must be checked before shipping it) and the architecture problem (the installed dylibs here are **arm64 only** — useless to an Intel Mac or Windows). Must handle: REAPER only loads extensions at startup (say so), macOS quarantine on browser downloads (strip it), and verifying the file's architecture before copying (REAPER can shell out to `lipo`).
-3. **Startup dependency check in all four plugins** — agreed and still to do. Today they degrade silently: three fall back to plain dialogs, and Rename quietly renumbers wrongly without JS_ReaScriptAPI.
+1. **Nothing here has been run in REAPER yet.** The installer and the .dmg pass the offline harness, but no one has double-clicked the image, run `steelblue_install.lua`, or watched `DoActionShortcutDialog` come up. Test on a machine that does *not* already have the plugins registered — Tobi's REAPER has them bound from `reaper-kb.ini` already, which hides exactly the case the installer is for.
+2. **Startup dependency check in the four plugins** — still open. Today they degrade silently: three fall back to plain dialogs, and Rename quietly renumbers wrongly without JS_ReaScriptAPI. The installer warns at install time, but a user who installs the extension later, or removes it, gets no word from the plugins themselves.
+3. **Windows.** Untested, and the tutorials no longer claim it. The Lua is portable, but `install_extension()` shells out to `/usr/bin/lipo`, `/bin/cp` and `/usr/bin/xattr` — all macOS-only. `build-dmg.sh` is macOS-only by nature. Tobi has Windows builds of ReaPack/JS_ReaScriptAPI in `../ReaperRenameMarkersInstaller/` if that becomes real.
+4. `rename-01-selection.png` shows unnamed markers, so the preview reads `(1)[Top]` and the `MarkerName` placeholder does not explain itself. Reshoot with named markers.
 4. `Live BPM Analyzer.lua`: verified on synthetic tests (≤0.002 BPM) and on the user's real song (0.017 BPM vs measured ground truth). Awaiting user sign-off after the ground-truth finding (the song was 130.97, not 130 — see status above).
 5. **`Rename selected markers.lua` should migrate to `steelblue_markers.lua`.** It currently carries its own copy of the selection logic containing a real bug: its `collect_selected_markers_from_region_api()` fallback feeds a `GetRegionOrMarker` index (counts markers AND regions) into `EnumProjectMarkers3` (indexes differently), so it can read the wrong marker. It has never run on Tobi's machine because JS_ReaScriptAPI is installed and the manager path always wins — which is exactly why it is worth fixing before the package ships to someone without it. The shared module resolves this by matching on `I_NUMBER`.
 6. **Dependency declaration for the package:** ReaImGui is required by all four (the BPM Analyzer refuses to start without it; the others fall back to plain dialogs). JS_ReaScriptAPI is required in practice by Rename (without it the cue order silently degrades). Copy Markers now survives without JS on REAPER 7.62+. **SWS is not used by any script** — keep it out of the install instructions.

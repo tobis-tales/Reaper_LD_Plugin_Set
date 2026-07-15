@@ -3,3 +3,6 @@
 # REAPER regenerates these from the audio
 *.reapeaks
 peaks/
+
+# built by build-dmg.sh, rebuildable at any time
+dist/
