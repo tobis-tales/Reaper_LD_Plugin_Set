@@ -4,7 +4,7 @@
 --   1. mistyped API names (crash on first use)
 --   2. unbalanced style stack (grows every frame until ImGui asserts)
 
-local dylib = "/Users/tobiaspehla/Library/Application Support/REAPER/UserPlugins/reaper_imgui-arm64.dylib"
+local dylib = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/extensions/macOS/reaper_imgui-arm64.dylib"
 
 local real = {}
 local count_real = 0

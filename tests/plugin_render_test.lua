@@ -4,12 +4,14 @@
 -- that in REAPER only appear once the window is open.
 
 local folder = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/"
-local dylib = "/Users/tobiaspehla/Library/Application Support/REAPER/UserPlugins/reaper_imgui-arm64.dylib"
+local dylib = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/extensions/macOS/reaper_imgui-arm64.dylib"
 
 local real_imgui = {}
+local count_real_imgui = 0
 local p = io.popen(string.format("strings %q | grep -oE '^-API_ImGui_[A-Za-z_0-9]+$'", dylib))
 for line in p:lines() do
   real_imgui[line:gsub("^-API_", "")] = true
+  count_real_imgui = count_real_imgui + 1
 end
 p:close()
 
@@ -149,6 +151,10 @@ for _, name in ipairs(plugins) do
     if state[key] ~= 0 then
       problems[#problems + 1] = string.format("%s stack %+d", key, state[key])
     end
+  end
+
+  if frames == 0 then
+    problems[#problems + 1] = "rendered 0 frames — the plugin never drew anything"
   end
 
   if #problems == 0 then
