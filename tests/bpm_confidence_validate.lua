@@ -3,15 +3,23 @@
 -- is as useless as one that is always 55%.
 
 BPM_ANALYZER_TEST = {}
-dofile("/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/Live BPM Analyzer.lua")
+dofile(((arg[0]:match("(.*/)") or "./").."../").."Live BPM Analyzer.lua")
 
 local T = BPM_ANALYZER_TEST
 local SR = T.sample_rate
 
 math.randomseed(2024)
 
+-- The "REAL SONG" cases below need a mono 32-bit-float raw dump of an actual
+-- track. That file is a copyrighted song, so it is deliberately NOT in the
+-- repo: point BPM_SONG_RAW at one you own to run those cases, otherwise they
+-- skip and the synthetic + control cases still validate the metric.
+local SONG_RAW = os.getenv("BPM_SONG_RAW")
+
 local function load_song(from_s, to_s)
-  local f = assert(io.open("/private/tmp/claude-501/-Users-tobiaspehla/839ceb2f-81f6-448d-8fbd-8ff448cd8a59/scratchpad/song.raw", "rb"))
+  if not SONG_RAW then return nil end
+  local f = io.open(SONG_RAW, "rb")
+  if not f then return nil end
   local data = f:read("a")
   f:close()
   local n = math.floor(#data / 4)
@@ -108,6 +116,10 @@ local function make_rubato(seconds)
 end
 
 local function run(buf, label, expect)
+  if not buf then
+    print(string.format("%-30s SKIPPED (set BPM_SONG_RAW to run)", label))
+    return true
+  end
   local onsets = T.build_onset_envelope(buf, #buf, 1)
   if not onsets then
     print(string.format("%-30s NO ENVELOPE", label))

@@ -7,7 +7,7 @@
 --   2. the flow does the right things: registers all four, asks about
 --      shortcuts, reports honestly about missing extensions
 
-local PKG = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/"
+local PKG = ((arg[0]:match("(.*/)") or "./").."../")..""
 local REAPER_BIN = "/Applications/REAPER.app/Contents/MacOS/REAPER"
 
 -- ---------------------------------------------------------------- 1. names

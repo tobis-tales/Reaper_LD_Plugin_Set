@@ -2,7 +2,7 @@
 -- and regions, a Region/Marker Manager with a list selection, and the various
 -- degraded setups (no JS extension, manager closed, old REAPER).
 
-local folder = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/"
+local folder = ((arg[0]:match("(.*/)") or "./").."../")..""
 
 -- project: markers 1,2,3 and region 1 interleaved, deliberately out of ID order
 local PROJECT = {

@@ -1,7 +1,7 @@
 -- Build a demo REAPER project for the tutorial screenshots:
 -- synthetic drum loop (no client material), a MIDI item, named markers.
 
-local DIR = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/Demo Project"
+local DIR = ((arg[0]:match("(.*/)") or "./").."../").."Demo Project"
 os.execute(string.format("mkdir -p %q", DIR))
 
 local SR = 44100

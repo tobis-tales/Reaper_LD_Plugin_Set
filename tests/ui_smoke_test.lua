@@ -4,7 +4,7 @@
 --   1. mistyped API names (crash on first use)
 --   2. unbalanced style stack (grows every frame until ImGui asserts)
 
-local dylib = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/extensions/macOS/reaper_imgui-arm64.dylib"
+local dylib = ((arg[0]:match("(.*/)") or "./").."../").."extensions/macOS/reaper_imgui-arm64.dylib"
 
 local real = {}
 local count_real = 0
@@ -58,7 +58,7 @@ reaper = setmetatable({}, {
   end,
 })
 
-local folder = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/"
+local folder = ((arg[0]:match("(.*/)") or "./").."../")..""
 local SB = dofile(folder .. "steelblue_ui.lua")
 print("module loaded, version " .. SB.VERSION)
 print(string.format("brand blue #%06X, brand grey #%06X", SB.BRAND_BLUE, SB.BRAND_GREY))

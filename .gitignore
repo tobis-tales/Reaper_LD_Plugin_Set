@@ -9,3 +9,9 @@ dist/
 
 # video build intermediates (slides, per-scene clips) — rebuildable
 Tutorials/video/work/
+
+# internal cross-agent memory — local only, not for the public repo
+AGENTS.md
+
+# a combined all-guides PDF kept locally; the per-plugin PDFs ship instead
+Steelblue_Reaper_LD_Plugin_Set.pdf

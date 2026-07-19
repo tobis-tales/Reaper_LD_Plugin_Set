@@ -3,8 +3,8 @@
 -- module functions, wrong argument counts, and style-stack leaks -- the things
 -- that in REAPER only appear once the window is open.
 
-local folder = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/"
-local dylib = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/extensions/macOS/reaper_imgui-arm64.dylib"
+local folder = ((arg[0]:match("(.*/)") or "./").."../")..""
+local dylib = ((arg[0]:match("(.*/)") or "./").."../").."extensions/macOS/reaper_imgui-arm64.dylib"
 
 local real_imgui = {}
 local count_real_imgui = 0

@@ -2,7 +2,7 @@
 -- Generates synthetic songs at known tempos and measures the estimation error.
 
 BPM_ANALYZER_TEST = {}
-dofile("/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/Live BPM Analyzer.lua")
+dofile(((arg[0]:match("(.*/)") or "./").."../").."Live BPM Analyzer.lua")
 
 local T = BPM_ANALYZER_TEST
 local SR = T.sample_rate

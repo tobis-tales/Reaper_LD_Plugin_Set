@@ -2,8 +2,8 @@
 -- Manager holding 3 selected markers, then make the button fire and see whether
 -- the frame survives and the status updates.
 
-local folder = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/"
-local dylib = "/Users/tobiaspehla/Desktop/Plugin Factory/Reaper LD Plugins Installationspaket/extensions/macOS/reaper_imgui-arm64.dylib"
+local folder = ((arg[0]:match("(.*/)") or "./").."../")..""
+local dylib = ((arg[0]:match("(.*/)") or "./").."../").."extensions/macOS/reaper_imgui-arm64.dylib"
 
 local real_imgui = {}
 local p = io.popen(string.format("strings %q | grep -oE '^-API_ImGui_[A-Za-z_0-9]+$'", dylib))
