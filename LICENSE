@@ -19,20 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-
--------------------------------------------------------------------------------
-Bundled third-party extensions
--------------------------------------------------------------------------------
-
-This license covers the steelblue studios code only — the four plugins, the
-installer, and the shared modules.
-
-The two REAPER extensions shipped under extensions/ are NOT ours and keep their
-own licenses:
-
-  ReaImGui         LGPL-3.0-or-later   extensions/LICENSE-ReaImGui-LGPL-3.0.txt
-  js_ReaScriptAPI  MIT                 extensions/LICENSE-js_ReaScriptAPI-MIT.txt
-
-They are shipped unmodified. See extensions/NOTICE.txt for versions, authors,
-and where the source lives.
