@@ -35,6 +35,8 @@ stage_payload() {
   cp "$REPO/steelblue_install.lua"              "$inner/"
   cp "$REPO/steelblue_ui.lua"                   "$inner/"
   cp "$REPO/steelblue_markers.lua"              "$inner/"
+  cp "$REPO/steelblue_boot.lua"                 "$inner/"
+  cp "$REPO/steelblue_matools.lua"              "$inner/"
   cp "$REPO/Live BPM Analyzer.lua"              "$inner/"
   cp "$REPO/MIDI notes to project markers.lua"  "$inner/"
   cp "$REPO/Rename selected markers.lua"        "$inner/"

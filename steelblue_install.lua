@@ -20,7 +20,12 @@ local PLUGINS = {
 }
 
 -- Shipped alongside the plugins; without them the plugins refuse to start.
-local MODULES = { "steelblue_ui.lua", "steelblue_markers.lua" }
+local MODULES = {
+  "steelblue_ui.lua",
+  "steelblue_markers.lua",
+  "steelblue_boot.lua",
+  "steelblue_matools.lua",
+}
 
 -- Bundled third-party extensions, per architecture. See extensions/NOTICE.txt:
 -- ReaImGui is LGPL-3.0, js_ReaScriptAPI is MIT, both are shipped unmodified and
@@ -383,9 +388,19 @@ local function copy_into_reaper()
 
   reaper.RecursiveCreateDirectory(target, 0)
 
+  -- iterate, never enumerate: this list used to name MODULES[1] and MODULES[2]
+  -- by hand, so a third module would have been left out of every install
+  -- without a word
+  local payload = {}
+  for _, plugin in ipairs(PLUGINS) do
+    payload[#payload + 1] = plugin.file
+  end
+  for _, module in ipairs(MODULES) do
+    payload[#payload + 1] = module
+  end
+
   local failed = {}
-  for _, name in ipairs({ PLUGINS[1].file, PLUGINS[2].file, PLUGINS[3].file, PLUGINS[4].file,
-                          MODULES[1], MODULES[2] }) do
+  for _, name in ipairs(payload) do
     if not copy_file(folder .. name, target .. name) then
       failed[#failed + 1] = name
     end
