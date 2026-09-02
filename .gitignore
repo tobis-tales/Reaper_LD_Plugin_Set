@@ -15,3 +15,7 @@ AGENTS.md
 
 # a combined all-guides PDF kept locally; the per-plugin PDFs ship instead
 Steelblue_Reaper_LD_Plugin_Set.pdf
+
+# conductor handover for the next build stage — local only, never public
+UEBERGABE.md
+REPORT-phase-*.md
