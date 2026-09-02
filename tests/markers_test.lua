@@ -3,9 +3,15 @@
 -- degraded setups (no JS extension, manager closed, old REAPER), and ruler
 -- lanes.
 --
--- The lane half of the fake deliberately inserts a newly created lane at the
--- FRONT. REAPER may put it anywhere, and "the last lane is the new one" is the
--- assumption the module must not make.
+-- Two things the lane half of the fake does on purpose:
+--   * a newly created lane is inserted at the FRONT. REAPER may put it
+--     anywhere, and "the last lane is the new one" is the assumption the
+--     module must not make.
+--   * RULER_LANE_COUNT answers only on GetSetProjectInfo (numeric). Asked
+--     through GetSetProjectInfo_String it returns false, exactly as REAPER
+--     does -- that split is what the first probe run got wrong.
+--
+-- Lane indexes are 0-based throughout, as the API is.
 
 local folder = ((arg[0]:match("(.*/)") or "./").."../")..""
 
@@ -20,7 +26,6 @@ local BASE_PROJECT = {
 local scenario = {}
 local PROJECT = {}
 local lanes = {}
-local lane_base = 1
 local next_marker_id = 3
 local calls = {}
 
@@ -32,14 +37,14 @@ local function copy_project()
     for key, value in pairs(entry) do
       clone[key] = value
     end
-    clone.lane = lane_base
+    clone.lane = 0
     copy[index] = clone
   end
   return copy
 end
 
 local function lane_at(descriptor_index)
-  return lanes[descriptor_index - lane_base + 1]
+  return lanes[descriptor_index + 1]
 end
 
 local function insert_lane()
@@ -65,11 +70,10 @@ end
 local function build_reaper()
   local r = {}
 
-  lane_base = scenario.lane_base or 1
   lanes = {}
   for _, lane in ipairs(scenario.lanes or {}) do
     lanes[#lanes + 1] = {
-      name = lane.name, color = lane.color, guid = lane.guid or ("{L" .. (#lanes + 1) .. "}"),
+      name = lane.name, color = lane.color or 0, guid = lane.guid or ("{L" .. #lanes .. "}"),
     }
   end
   PROJECT = copy_project()
@@ -151,25 +155,42 @@ local function build_reaper()
   end
 
   if scenario.lane_api then
-    r.GetSetProjectInfo_String = function(_, desc, value, is_set)
+    -- numeric descriptors
+    r.GetSetProjectInfo = function(_, desc, value, is_set)
       if desc == "RULER_LANE_COUNT" then
-        -- a 7.78 build whose project has no lane support answers false here,
-        -- which is the module's whole feature detection
-        if not scenario.lanes or is_set then return false, "" end
-        return true, tostring(#lanes)
+        -- a build or project without lane support reports none
+        return scenario.lanes and #lanes or 0
       end
-
-      if not scenario.lanes then return false, "" end
 
       if desc == "RULER_LANE_ORDER:-1" and is_set then
         calls[#calls + 1] = { kind = "lane_order", value = value }
         if scenario.create_via == "order" then
           insert_lane()
-          return true
         end
-        return false
+        return value
       end
 
+      local param, index = desc:match("^RULER_LANE_(%u+):(-?%d+)$")
+      if not param then return 0 end
+
+      local lane = lane_at(tonumber(index))
+      if not lane then return 0 end
+
+      local key = param:lower()
+      if key == "visible" then
+        return lane.hidden == 1 and 0 or 1
+      end
+
+      if is_set then
+        lane[key] = value
+        return value
+      end
+
+      return tonumber(lane[key]) or 0
+    end
+
+    -- string descriptors: NAME and GUID, and nothing else
+    r.GetSetProjectInfo_String = function(_, desc, value, is_set)
       if desc == "RULER_LANE_TYPE" and is_set then
         calls[#calls + 1] = { kind = "lane_type", value = value }
         if scenario.create_via == "type" then
@@ -180,30 +201,33 @@ local function build_reaper()
       end
 
       local param, index = desc:match("^RULER_LANE_(%u+):(-?%d+)$")
-      if not param then return false, "" end
+      if param ~= "NAME" and param ~= "GUID" then
+        -- REAPER answers false for every numeric descriptor asked here,
+        -- RULER_LANE_COUNT included
+        return false, ""
+      end
 
       local lane = lane_at(tonumber(index))
       if not lane then return false, "" end
 
-      local key = param:lower()
-      if key == "guid" then
+      if param == "GUID" then
         if is_set then return false, "" end
         return true, lane.guid
       end
 
       if is_set then
-        lane[key] = value
+        lane.name = value
         return true
       end
 
-      return true, tostring(lane[key] or "")
+      return true, lane.name
     end
 
     r.AddRegionOrMarker = function(_, isrgn, pos, rgnend, name, wantidx, color)
       next_marker_id = next_marker_id + 1
       local entry = {
         is_region = isrgn, pos = pos, name = name, id = next_marker_id, color = color,
-        lane = lane_base, guid = "{Mnew" .. next_marker_id .. "}",
+        lane = 0, guid = "{Mnew" .. next_marker_id .. "}",
       }
       PROJECT[#PROJECT + 1] = entry
       calls[#calls + 1] = { kind = "add_region_or_marker", pos = pos, name = name, color = color }
@@ -334,7 +358,7 @@ end
 
 local LANES_178 = function(extra)
   local setup = {
-    version = "7.78/OSX64", new_api = true, lane_api = true, lane_base = 1,
+    version = "7.78/OSX64", new_api = true, lane_api = true,
     lanes = { { name = "Kick", color = 111 }, { name = "Snare", color = 222 } },
   }
   for key, value in pairs(extra or {}) do setup[key] = value end
@@ -352,34 +376,33 @@ check(run_lane("7.78 but no lane support: nothing pretends", {
   if by_id[1].lane ~= nil or by_id[1].guid ~= nil then
     return false, "lane/guid filled in anyway"
   end
-  return true, "RULER_LANE_COUNT said no"
+  return true, "RULER_LANE_COUNT said 0"
 end))
 
-check(run_lane("lanes, 1-based: entries carry lane and guid", LANES_178(), function(M)
-  if not M.lanes_available() then return false, "no lanes" end
-  if M.lane_index_base() ~= 1 then return false, "base " .. M.lane_index_base() end
+-- The first probe run read every descriptor through GetSetProjectInfo_String
+-- and concluded REAPER had no lanes. This is that mistake, as a test.
+check(run_lane("RULER_LANE_COUNT is read numerically", LANES_178(), function(M)
+  local as_string = reaper.GetSetProjectInfo_String(0, "RULER_LANE_COUNT", "", false)
+  if as_string ~= false then return false, "the fake is too generous" end
+  if not M.lanes_available() then return false, "read COUNT through the string call" end
   if M.lane_count() ~= 2 then return false, "count " .. M.lane_count() end
+  return true, "numeric COUNT = 2, string COUNT = false"
+end))
+
+check(run_lane("lanes: entries carry lane and guid", LANES_178(), function(M)
+  if not M.lanes_available() then return false, "no lanes" end
   local by_id = M.markers_by_id()
   if by_id[1].guid ~= "{M1}" then return false, "guid=" .. tostring(by_id[1].guid) end
-  if by_id[1].lane ~= 1 then return false, "lane=" .. tostring(by_id[1].lane) end
+  if by_id[1].lane ~= 0 then return false, "lane=" .. tostring(by_id[1].lane) end
   if by_id[3].guid ~= "{M3}" then return false, "guid=" .. tostring(by_id[3].guid) end
-  return true, "guid {M1}, lane 1"
+  return true, "guid {M1}, lane 0"
 end))
 
-check(run_lane("lanes, 0-based: base detected, not assumed", LANES_178({
-  lane_base = 0,
-}), function(M)
-  if M.lane_index_base() ~= 0 then return false, "base " .. M.lane_index_base() end
+check(run_lane("lane_by_name: hit and miss, 0-based", LANES_178(), function(M)
   if M.lane_by_name("Kick") ~= 0 then return false, "Kick at " .. tostring(M.lane_by_name("Kick")) end
   if M.lane_by_name("Snare") ~= 1 then return false, "Snare at " .. tostring(M.lane_by_name("Snare")) end
-  local by_id = M.markers_by_id()
-  return by_id[1].lane == 0, "markers report lane 0"
-end))
-
-check(run_lane("lane_by_name: hit and miss", LANES_178(), function(M)
-  if M.lane_by_name("Kick") ~= 1 then return false, "Kick at " .. tostring(M.lane_by_name("Kick")) end
-  if M.lane_by_name("Snare") ~= 2 then return false, "Snare at " .. tostring(M.lane_by_name("Snare")) end
-  if M.lane_name(2) ~= "Snare" then return false, "lane_name(2)=" .. M.lane_name(2) end
+  if M.lane_name(1) ~= "Snare" then return false, "lane_name(1)=" .. M.lane_name(1) end
+  if M.lane_color(1) ~= 222 then return false, "lane_color(1)=" .. tostring(M.lane_color(1)) end
   return M.lane_by_name("Hat") == nil, "no lane called Hat"
 end))
 
@@ -387,10 +410,10 @@ check(run_lane("ensure_lane reuses, and keeps its colour", LANES_178({
   create_via = "order",
 }), function(M)
   local index, reason = M.ensure_lane("Kick", 999)
-  if index ~= 1 then return false, "index=" .. tostring(index) .. " reason=" .. tostring(reason) end
+  if index ~= 0 then return false, "index=" .. tostring(index) .. " reason=" .. tostring(reason) end
   if M.lane_count() ~= 2 then return false, "created one anyway: " .. M.lane_count() end
-  if M.lane_color(1) ~= 111 then return false, "colour became " .. tostring(M.lane_color(1)) end
-  return true, "lane 1, colour 111 untouched"
+  if M.lane_color(0) ~= 111 then return false, "colour became " .. tostring(M.lane_color(0)) end
+  return true, "lane 0, colour 111 untouched"
 end))
 
 check(run_lane("ensure_lane creates via RULER_LANE_ORDER:-1", LANES_178({
@@ -399,11 +422,13 @@ check(run_lane("ensure_lane creates via RULER_LANE_ORDER:-1", LANES_178({
   local index, reason = M.ensure_lane("Snare", 222)
   if not index then return false, "reason=" .. tostring(reason) end
   if M.lane_count() ~= 2 then return false, "count " .. M.lane_count() end
-  -- the fake inserts at the front, so "the last lane" would answer 2 here
-  if index ~= 1 then return false, "found lane " .. index .. ", not the new one" end
-  if M.lane_name(1) ~= "Snare" then return false, "name " .. M.lane_name(1) end
-  if M.lane_color(1) ~= 222 then return false, "colour " .. tostring(M.lane_color(1)) end
-  if M.lane_name(2) ~= "Kick" or M.lane_color(2) ~= 111 then
+  local call = last("lane_order")
+  if not call or call.value ~= 1 then return false, "ORDER value " .. tostring(call and call.value) end
+  -- the fake inserts at the front, so "the last lane" would answer 1 here
+  if index ~= 0 then return false, "found lane " .. index .. ", not the new one" end
+  if M.lane_name(0) ~= "Snare" then return false, "name " .. M.lane_name(0) end
+  if M.lane_color(0) ~= 222 then return false, "colour " .. tostring(M.lane_color(0)) end
+  if M.lane_name(1) ~= "Kick" or M.lane_color(1) ~= 111 then
     return false, "the existing lane was disturbed"
   end
   return true, "new lane found by GUID, not by position"
@@ -414,10 +439,10 @@ check(run_lane("ensure_lane falls back to RULER_LANE_TYPE", LANES_178({
 }), function(M)
   local index, reason = M.ensure_lane("Snare", 222)
   if not index then return false, "reason=" .. tostring(reason) end
-  if count("lane_order") ~= 2 then return false, count("lane_order") .. " ORDER attempts" end
+  if count("lane_order") ~= 1 then return false, count("lane_order") .. " ORDER attempts" end
   if count("lane_type") ~= 1 then return false, count("lane_type") .. " TYPE attempts" end
   if M.lane_name(index) ~= "Snare" then return false, "name " .. M.lane_name(index) end
-  return M.lane_count() == 2, "ORDER twice, then TYPE"
+  return M.lane_count() == 2, "ORDER once, then TYPE"
 end))
 
 check(run_lane("ensure_lane gives up honestly", LANES_178({
@@ -431,11 +456,11 @@ end))
 
 check(run_lane("set_lane writes and reads back", LANES_178(), function(M)
   local entry = M.markers_by_id()[2]
-  if not M.set_lane(entry, 2) then return false, "returned false" end
+  if not M.set_lane(entry, 1) then return false, "returned false" end
   local call = last("set_lane")
-  if not call or call.guid ~= "{M2}" or call.value ~= 2 then return false, "wrong set call" end
-  if entry.lane ~= 2 then return false, "entry still says " .. tostring(entry.lane) end
-  return M.markers_by_id()[2].lane == 2, "marker 2 is in lane 2"
+  if not call or call.guid ~= "{M2}" or call.value ~= 1 then return false, "wrong set call" end
+  if entry.lane ~= 1 then return false, "entry still says " .. tostring(entry.lane) end
+  return M.markers_by_id()[2].lane == 1, "marker 2 is in lane 1"
 end))
 
 check(run_lane("rename on 7.78 writes only the name", LANES_178(), function(M)
@@ -464,20 +489,20 @@ check(run_lane("rename on 7.75 falls back to SetProjectMarker4", {
 end))
 
 check(run_lane("add_marker creates in the lane", LANES_178(), function(M)
-  local entry, reason = M.add_marker(30.0, "drop", 555, 2)
+  local entry, reason = M.add_marker(30.0, "drop", 555, 1)
   if not entry then return false, "reason=" .. tostring(reason) end
   if reason ~= nil then return false, "reason=" .. tostring(reason) end
   if count("add_region_or_marker") ~= 1 then return false, "wrong creation call" end
   if count("add_project_marker2") ~= 0 then return false, "used the discouraged call" end
   if not entry.guid then return false, "no guid" end
-  if entry.lane ~= 2 then return false, "lane " .. tostring(entry.lane) end
-  return M.markers_by_id()[entry.id].lane == 2, "marker " .. entry.id .. " in lane 2"
+  if entry.lane ~= 1 then return false, "lane " .. tostring(entry.lane) end
+  return M.markers_by_id()[entry.id].lane == 1, "marker " .. entry.id .. " in lane 1"
 end))
 
 check(run_lane("add_marker on 7.75: no lane, and it says so", {
   version = "7.75/OSX64", new_api = true,
 }, function(M)
-  local entry, reason = M.add_marker(30.0, "drop", 555, 2)
+  local entry, reason = M.add_marker(30.0, "drop", 555, 1)
   if not entry then return false, "nothing created" end
   if reason ~= M.NO_LANES then return false, "reason=" .. tostring(reason) end
   if count("add_project_marker2") ~= 1 then return false, "wrong creation call" end

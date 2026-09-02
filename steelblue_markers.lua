@@ -7,6 +7,16 @@
 --
 -- Reading "which markers did the user select" is the one job several plugins
 -- share, and the one with the most edge cases, so it lives here once.
+--
+-- Lane indexes (RULER_LANE_*:X, I_LANENUMBER) are 0-based; the Ruler Lane
+-- Manager and the .RPP show them 1-based. Verified 2026-09-02 by matching
+-- RULER_LANE_GUID:0 against the RULERLANE 1 line of a saved project.
+--
+-- The lane descriptors are split over two REAPER functions, and getting that
+-- wrong makes every one of them answer "no": GetSetProjectInfo takes the
+-- numeric ones (COUNT, ORDER:X, COLOR:X, HIDDEN:X, LOCKED:X, VISIBLE:X,
+-- DEFAULT:X, TIMEBASE:X, FROM_GUID:X), GetSetProjectInfo_String only NAME:X
+-- and GUID:X.
 
 local M = {}
 
@@ -24,6 +34,7 @@ M.ADD_FAILED = "add-failed"
 -- 7.72. Below that the lane functions say so and the callers degrade to name
 -- and colour, which is what the plugins do today anyway.
 local LANE_API = {
+  "GetSetProjectInfo",
   "GetSetProjectInfo_String",
   "GetNumRegionsOrMarkers",
   "GetRegionOrMarker",
@@ -251,18 +262,26 @@ end
 -- REAPER has ruler lanes since 7.62, and markers can be assigned to one. Two
 -- things about the API decide the shape of everything below:
 --
---   * lane descriptors are strings with the index baked in ("RULER_LANE_NAME:2"),
---     and whether that index starts at 0 or 1 is not documented. It is detected
---     at runtime instead of assumed.
+--   * the descriptors live on two different functions -- see the file header.
+--     Reading COUNT through the string one returns false, which reads exactly
+--     like "this build has no lanes".
 --   * a marker pointer is only valid for as long as nothing else changes the
 --     project, so every mutation resolves the marker again from its GUID.
 
-local function lane_string(desc)
+local function lane_number(desc)
+  return reaper.GetSetProjectInfo(0, desc, 0, false)
+end
+
+local function set_lane_number(desc, value)
+  return reaper.GetSetProjectInfo(0, desc, value, true)
+end
+
+local function lane_text(desc)
   local retval, str = reaper.GetSetProjectInfo_String(0, desc, "", false)
   return retval, str
 end
 
-local function set_lane_string(desc, value)
+local function set_lane_text(desc, value)
   return reaper.GetSetProjectInfo_String(0, desc, value, true)
 end
 
@@ -277,8 +296,7 @@ function M.lanes_available()
     return false
   end
 
-  local retval = lane_string("RULER_LANE_COUNT")
-  return retval and true or false
+  return (tonumber(lane_number("RULER_LANE_COUNT")) or 0) >= 1
 end
 
 function M.lane_count()
@@ -286,19 +304,7 @@ function M.lane_count()
     return 0
   end
 
-  local _, str = lane_string("RULER_LANE_COUNT")
-  return tonumber(str) or 0
-end
-
--- 0 or 1. RULER_LANE_NAME:0 answering at all is the tell; with no lanes at all
--- there is nothing to ask, so assume 1 (what the Ruler Lane Manager displays).
-function M.lane_index_base()
-  if not M.lanes_available() or M.lane_count() == 0 then
-    return 1
-  end
-
-  local retval = lane_string("RULER_LANE_NAME:0")
-  return retval and 0 or 1
+  return tonumber(lane_number("RULER_LANE_COUNT")) or 0
 end
 
 function M.lane_name(index)
@@ -306,7 +312,7 @@ function M.lane_name(index)
     return ""
   end
 
-  local retval, str = lane_string("RULER_LANE_NAME:" .. index)
+  local retval, str = lane_text("RULER_LANE_NAME:" .. index)
   return retval and str or ""
 end
 
@@ -315,12 +321,7 @@ function M.lane_color(index)
     return nil
   end
 
-  local retval, str = lane_string("RULER_LANE_COLOR:" .. index)
-  if not retval then
-    return nil
-  end
-
-  return tonumber(str)
+  return tonumber(lane_number("RULER_LANE_COLOR:" .. index))
 end
 
 function M.lane_by_name(name)
@@ -328,8 +329,7 @@ function M.lane_by_name(name)
     return nil
   end
 
-  local base = M.lane_index_base()
-  for index = base, base + M.lane_count() - 1 do
+  for index = 0, M.lane_count() - 1 do
     if M.lane_name(index) == name then
       return index
     end
@@ -342,10 +342,9 @@ end
 -- before. Never "the last lane": REAPER may insert it anywhere.
 local function lane_guids()
   local by_guid = {}
-  local base = M.lane_index_base()
 
-  for index = base, base + M.lane_count() - 1 do
-    local retval, guid = lane_string("RULER_LANE_GUID:" .. index)
+  for index = 0, M.lane_count() - 1 do
+    local retval, guid = lane_text("RULER_LANE_GUID:" .. index)
     if retval and guid and guid ~= "" then
       by_guid[guid] = index
     end
@@ -372,17 +371,15 @@ function M.ensure_lane(name, color)
   local before_count = M.lane_count()
   local before_guids = lane_guids()
 
-  -- ASSUMPTION(probe): value passed to RULER_LANE_ORDER:-1
-  set_lane_string("RULER_LANE_ORDER:-1", tostring(before_count + M.lane_index_base()))
+  -- ASSUMPTION(probe): value passed to RULER_LANE_ORDER:-1 is the position of
+  -- the new lane, 0-based, so before_count appends it at the end
+  set_lane_number("RULER_LANE_ORDER:-1", before_count)
 
   if M.lane_count() == before_count then
-    set_lane_string("RULER_LANE_ORDER:-1", "")
-  end
-
-  if M.lane_count() == before_count then
-    -- whatsnew 7.62 documents RULER_LANE_TYPE for this; the string is gone from
-    -- the 7.78 binary, so it is the fallback for 7.62..7.7x builds, not the way
-    set_lane_string("RULER_LANE_TYPE", "2")
+    -- whatsnew 7.62 documents RULER_LANE_TYPE for this; the string is in
+    -- neither doc block of the 7.78 binary, so it is the fallback for
+    -- 7.62..7.7x builds, not the way
+    set_lane_text("RULER_LANE_TYPE", "2")
   end
 
   if M.lane_count() == before_count then
@@ -403,9 +400,9 @@ function M.ensure_lane(name, color)
     return nil, M.LANE_CREATE_FAILED
   end
 
-  set_lane_string("RULER_LANE_NAME:" .. created, name)
+  set_lane_text("RULER_LANE_NAME:" .. created, name)
   if color then
-    set_lane_string("RULER_LANE_COLOR:" .. created, tostring(color))
+    set_lane_number("RULER_LANE_COLOR:" .. created, color)
   end
 
   return created
@@ -423,7 +420,6 @@ function M.set_lane(entry, index)
     return false
   end
 
-  -- ASSUMPTION(probe): I_LANENUMBER uses the same base as RULER_LANE_*:X
   reaper.SetRegionOrMarkerInfo_Value(0, region_marker, "I_LANENUMBER", index)
 
   local now = reaper.GetRegionOrMarkerInfo_Value(0, region_marker, "I_LANENUMBER")
@@ -477,7 +473,6 @@ function M.add_marker(pos, name, color, lane)
     end
 
     if lane then
-      -- ASSUMPTION(probe): I_LANENUMBER uses the same base as RULER_LANE_*:X
       reaper.SetRegionOrMarkerInfo_Value(0, region_marker, "I_LANENUMBER", lane)
     end
 
