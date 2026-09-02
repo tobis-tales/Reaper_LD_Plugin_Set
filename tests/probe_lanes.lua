@@ -1,14 +1,27 @@
 -- probe_lanes.lua
--- Answers the three open ruler-lane questions that cannot be answered outside
--- REAPER: where the lane index starts (0 or 1), what value RULER_LANE_ORDER:-1
--- wants, and how markers behave once they sit in a lane.
+-- Answers what cannot be answered outside REAPER: what RULER_LANE_ORDER:-1
+-- wants in order to create a lane, and how a marker behaves once it sits in
+-- one.
 --
 -- HOW TO RUN
---   1. Open a NEW, EMPTY project (File -> New project). This script creates a
---      lane and two markers, so do not run it in real work.
---   2. Actions -> Show action list -> "Load ReaScript..." -> pick this file.
+--   1. Open a NEW, EMPTY project (File > New project tab). This script creates
+--      a lane and two markers, so it refuses to run in a project that already
+--      has markers or tracks.
+--   2. Actions > Show action list > "Load ReaScript..." > pick this file.
 --   3. Copy the whole console text and hand it back.
---   4. Save the project as tests/fixtures/lanes_probe.RPP.
+--   4. File > Save project as... > tests/fixtures/lanes_probe.RPP
+--
+-- Two functions, and which descriptor belongs to which is the thing v1 got
+-- wrong (verified against the doc blocks in the 7.78 binary, 2026-09-02):
+--   GetSetProjectInfo(proj, desc, value, is_set) -> number
+--     RULER_LANE_COUNT, RULER_LANE_ORDER:X, RULER_LANE_COLOR:X,
+--     RULER_LANE_HIDDEN:X, RULER_LANE_LOCKED:X, RULER_LANE_VISIBLE:X,
+--     RULER_LANE_DEFAULT:X, RULER_LANE_TIMEBASE:X, RULER_LANE_FROM_GUID:X
+--   GetSetProjectInfo_String(proj, desc, str, is_set) -> retval, str
+--     RULER_LANE_NAME:X, RULER_LANE_GUID:X
+--
+-- Lane indexes are 0-based in the API; the Ruler Lane Manager and the .RPP
+-- show them 1-based.
 --
 -- It writes no file and touches nothing but the open project. Every step runs
 -- in pcall, so one unsupported call cannot cut the probe short. Output is
@@ -25,43 +38,67 @@ local function step(label, fn)
   end
 end
 
-local function lane_string(desc)
+-- numeric descriptors
+local function lane_number(desc)
+  return reaper.GetSetProjectInfo(0, desc, 0, false)
+end
+
+local function set_lane_number(desc, value)
+  return reaper.GetSetProjectInfo(0, desc, value, true)
+end
+
+-- string descriptors (NAME and GUID only)
+local function lane_text(desc)
   local retval, str = reaper.GetSetProjectInfo_String(0, desc, "", false)
   return retval, str
 end
 
-local function lane_count()
-  local _, str = lane_string("RULER_LANE_COUNT")
-  return tonumber(str) or 0
+local function set_lane_text(desc, value)
+  return reaper.GetSetProjectInfo_String(0, desc, value, true)
 end
 
--- X = 0..count covers both possible index bases without assuming one.
+local function lane_count()
+  return tonumber(lane_number("RULER_LANE_COUNT")) or 0
+end
+
 local function list_lanes(tag)
   local count = lane_count()
   say(tag .. " COUNT", count)
-  for x = 0, count do
-    local name_ok, name = lane_string("RULER_LANE_NAME:" .. x)
-    local color_ok, color = lane_string("RULER_LANE_COLOR:" .. x)
-    local guid_ok, guid = lane_string("RULER_LANE_GUID:" .. x)
+
+  for x = 0, count - 1 do
+    local name_ok, name = lane_text("RULER_LANE_NAME:" .. x)
+    local guid_ok, guid = lane_text("RULER_LANE_GUID:" .. x)
     say(tag .. " LANE " .. x, string.format(
-      "name_ok=%s name=%q color_ok=%s color=%q guid_ok=%s guid=%q",
+      "name_ok=%s name=%q guid_ok=%s guid=%q color=%s default=%s timebase=%s hidden=%s visible=%s locked=%s",
       tostring(name_ok), tostring(name),
-      tostring(color_ok), tostring(color),
-      tostring(guid_ok), tostring(guid)
+      tostring(guid_ok), tostring(guid),
+      tostring(lane_number("RULER_LANE_COLOR:" .. x)),
+      tostring(lane_number("RULER_LANE_DEFAULT:" .. x)),
+      tostring(lane_number("RULER_LANE_TIMEBASE:" .. x)),
+      tostring(lane_number("RULER_LANE_HIDDEN:" .. x)),
+      tostring(lane_number("RULER_LANE_VISIBLE:" .. x)),
+      tostring(lane_number("RULER_LANE_LOCKED:" .. x))
     ))
   end
+
+  -- one index past the end, to show what out of range answers
+  local past_ok, past = lane_text("RULER_LANE_NAME:" .. count)
+  say(tag .. " LANE " .. count .. " (out of range)",
+    string.format("name_ok=%s name=%q", tostring(past_ok), tostring(past)))
 end
 
--- GUID -> index, for spotting which lane is the new one.
+-- GUID -> index, for spotting which lane is the new one
 local function lane_guids()
   local by_guid, in_order = {}, {}
-  for x = 0, lane_count() do
-    local ok, guid = lane_string("RULER_LANE_GUID:" .. x)
+
+  for x = 0, lane_count() - 1 do
+    local ok, guid = lane_text("RULER_LANE_GUID:" .. x)
     if ok and guid and guid ~= "" and by_guid[guid] == nil then
       by_guid[guid] = x
       in_order[#in_order + 1] = guid
     end
   end
+
   return by_guid, in_order
 end
 
@@ -69,7 +106,21 @@ if reaper.ClearConsole then
   reaper.ClearConsole()
 end
 
-say("PROBE", "steelblue ruler lane probe")
+-- ------------------------------------------------- refuse a busy project
+
+local existing_markers = reaper.GetNumRegionsOrMarkers and reaper.GetNumRegionsOrMarkers(0) or 0
+local existing_tracks = reaper.CountTracks and reaper.CountTracks(0) or 0
+
+if existing_markers > 0 or existing_tracks > 0 then
+  reaper.ShowConsoleMsg(string.format(
+    "REFUSING: project is not empty (%d markers/regions, %d tracks). " ..
+    "In REAPER: File > New project tab, then run this script again.\n",
+    existing_markers, existing_tracks
+  ))
+  return
+end
+
+say("PROBE", "steelblue ruler lane probe v2")
 
 -- ------------------------------------------------------------------ a) API
 
@@ -77,6 +128,7 @@ step("a", function()
   say("APP_VERSION", reaper.GetAppVersion and reaper.GetAppVersion() or "unknown")
 
   local names = {
+    "GetSetProjectInfo",
     "GetSetProjectInfo_String",
     "GetNumRegionsOrMarkers",
     "GetRegionOrMarker",
@@ -86,6 +138,7 @@ step("a", function()
     "AddRegionOrMarker",
     "AddProjectMarker2",
     "ColorToNative",
+    "CountTracks",
   }
 
   for _, name in ipairs(names) do
@@ -93,22 +146,16 @@ step("a", function()
   end
 end)
 
--- ------------------------------------------------------- b) count and base
+-- ------------------------------------------------------- b) what is there
 
 step("b", function()
-  local count_ok, count_str = lane_string("RULER_LANE_COUNT")
-  say("RULER_LANE_COUNT retval", tostring(count_ok))
-  say("RULER_LANE_COUNT str", string.format("%q", tostring(count_str)))
+  say("RULER_LANE_COUNT (numeric)", tostring(lane_number("RULER_LANE_COUNT")))
 
-  local zero_ok, zero_str = lane_string("RULER_LANE_NAME:0")
-  say("RULER_LANE_NAME:0 retval", tostring(zero_ok))
-  say("RULER_LANE_NAME:0 str", string.format("%q", tostring(zero_str)))
-
-  local one_ok, one_str = lane_string("RULER_LANE_NAME:1")
-  say("RULER_LANE_NAME:1 retval", tostring(one_ok))
-  say("RULER_LANE_NAME:1 str", string.format("%q", tostring(one_str)))
-
-  say("LANE_INDEX_BASE (from NAME:0 retval)", zero_ok and 0 or 1)
+  -- v1 asked this through _String and got false, which is how the wrong
+  -- function was found; recorded here so the difference stays visible
+  local string_ok, string_value = lane_text("RULER_LANE_COUNT")
+  say("RULER_LANE_COUNT via _String retval", tostring(string_ok))
+  say("RULER_LANE_COUNT via _String str", string.format("%q", tostring(string_value)))
 
   list_lanes("BEFORE")
 end)
@@ -123,26 +170,28 @@ step("c", function()
   guids_before = lane_guids()
   say("COUNT BEFORE CREATE", before)
 
-  local attempts = {
-    { desc = "RULER_LANE_ORDER:-1", value = tostring(before + 1) },
-    { desc = "RULER_LANE_ORDER:-1", value = tostring(before) },
-    { desc = "RULER_LANE_ORDER:-1", value = "" },
-    { desc = "RULER_LANE_TYPE",     value = "2" },
-    { desc = "RULER_LANE_TYPE",     value = "1" },
-  }
+  -- value is the position of the new lane, 0-based, so `before` appends
+  local first = set_lane_number("RULER_LANE_ORDER:-1", before)
+  say("CREATE TRY 1 call", string.format("GetSetProjectInfo(0, \"RULER_LANE_ORDER:-1\", %d, true)", before))
+  say("CREATE TRY 1 return", tostring(first))
+  say("CREATE TRY 1 count after", lane_count())
 
-  for index, attempt in ipairs(attempts) do
-    local retval = reaper.GetSetProjectInfo_String(0, attempt.desc, attempt.value, true)
-    local after = lane_count()
-    say(string.format("CREATE TRY %d desc", index), attempt.desc)
-    say(string.format("CREATE TRY %d value", index), string.format("%q", attempt.value))
-    say(string.format("CREATE TRY %d retval", index), tostring(retval))
-    say(string.format("CREATE TRY %d count after", index), after)
+  if lane_count() == before then
+    local second = set_lane_number("RULER_LANE_ORDER:-1", 0)
+    say("CREATE TRY 2 call", "GetSetProjectInfo(0, \"RULER_LANE_ORDER:-1\", 0, true)")
+    say("CREATE TRY 2 return", tostring(second))
+    say("CREATE TRY 2 count after", lane_count())
+  end
 
-    if after > before then
-      say("CREATE WORKED VIA", attempt.desc .. " = " .. string.format("%q", attempt.value))
-      break
-    end
+  if lane_count() == before then
+    local third = set_lane_text("RULER_LANE_TYPE", "2")
+    say("CREATE TRY 3 call", "GetSetProjectInfo_String(0, \"RULER_LANE_TYPE\", \"2\", true)")
+    say("CREATE TRY 3 retval", tostring(third))
+    say("CREATE TRY 3 count after", lane_count())
+  end
+
+  if lane_count() == before then
+    say("CREATE", "no attempt changed RULER_LANE_COUNT")
   end
 
   list_lanes("AFTER CREATE")
@@ -167,16 +216,18 @@ step("d", function()
   end
 
   local color = reaper.ColorToNative(70, 130, 180) | 0x1000000
-  say("SET NAME retval", tostring(
-    reaper.GetSetProjectInfo_String(0, "RULER_LANE_NAME:" .. created_index, "probe", true)))
+  say("SET NAME retval", tostring(set_lane_text("RULER_LANE_NAME:" .. created_index, "probe")))
   say("SET COLOR value", color)
-  say("SET COLOR retval", tostring(
-    reaper.GetSetProjectInfo_String(0, "RULER_LANE_COLOR:" .. created_index, tostring(color), true)))
+  say("SET COLOR return", tostring(set_lane_number("RULER_LANE_COLOR:" .. created_index, color)))
 
-  for _, param in ipairs({ "NAME", "COLOR", "GUID", "DEFAULT", "TIMEBASE", "HIDDEN", "VISIBLE" }) do
+  local name_ok, name = lane_text("RULER_LANE_NAME:" .. created_index)
+  say("READBACK NAME", string.format("retval=%s str=%q", tostring(name_ok), tostring(name)))
+  local guid_ok, guid = lane_text("RULER_LANE_GUID:" .. created_index)
+  say("READBACK GUID", string.format("retval=%s str=%q", tostring(guid_ok), tostring(guid)))
+
+  for _, param in ipairs({ "COLOR", "DEFAULT", "TIMEBASE", "HIDDEN", "VISIBLE", "LOCKED" }) do
     local desc = "RULER_LANE_" .. param .. ":" .. created_index
-    local ok, str = lane_string(desc)
-    say("READBACK " .. desc, string.format("retval=%s str=%q", tostring(ok), tostring(str)))
+    say("READBACK " .. desc, tostring(lane_number(desc)))
   end
 end)
 
@@ -214,8 +265,8 @@ step("f", function()
   end
 
   local retval = reaper.SetRegionOrMarkerInfo_Value(0, probe_marker, "I_LANENUMBER", created_index)
-  say("SET I_LANENUMBER arg", created_index)
-  say("SET I_LANENUMBER retval", tostring(retval))
+  say("SET I_LANENUMBER arg (0-based)", created_index)
+  say("SET I_LANENUMBER return", tostring(retval))
   say("MARKER I_LANENUMBER readback",
     tostring(reaper.GetRegionOrMarkerInfo_Value(0, probe_marker, "I_LANENUMBER")))
 
@@ -238,15 +289,14 @@ step("g", function()
     return
   end
 
-  say("SET HIDDEN 1 retval", tostring(
-    reaper.GetSetProjectInfo_String(0, "RULER_LANE_HIDDEN:" .. created_index, "1", true)))
+  say("SET HIDDEN 1 return", tostring(set_lane_number("RULER_LANE_HIDDEN:" .. created_index, 1)))
+  say("READBACK HIDDEN", tostring(lane_number("RULER_LANE_HIDDEN:" .. created_index)))
   if probe_marker then
     say("MARKER B_VISIBLE while lane hidden",
       tostring(reaper.GetRegionOrMarkerInfo_Value(0, probe_marker, "B_VISIBLE")))
   end
 
-  say("SET HIDDEN 0 retval", tostring(
-    reaper.GetSetProjectInfo_String(0, "RULER_LANE_HIDDEN:" .. created_index, "0", true)))
+  say("SET HIDDEN 0 return", tostring(set_lane_number("RULER_LANE_HIDDEN:" .. created_index, 0)))
   if probe_marker then
     say("MARKER B_VISIBLE after unhide",
       tostring(reaper.GetRegionOrMarkerInfo_Value(0, probe_marker, "B_VISIBLE")))
@@ -313,11 +363,14 @@ step("i", function()
   local empty_ok, empty_str = reaper.GetSetRegionOrMarkerInfo_String(0, rm, "P_NAME", "", false)
   say("P_NAME readback after clear",
     string.format("retval=%s str=%q", tostring(empty_ok), tostring(empty_str)))
+
+  say("MARKER I_LANENUMBER after renames",
+    tostring(reaper.GetRegionOrMarkerInfo_Value(0, rm, "I_LANENUMBER")))
 end)
 
 -- ------------------------------------------------------------------ j) end
 
 reaper.ShowConsoleMsg(
   "PROBE DONE - save this project as tests/fixtures/lanes_probe.RPP " ..
-  "and paste this console to the conductor.\n"
+  "(File > Save project as) and paste this console to the conductor.\n"
 )
