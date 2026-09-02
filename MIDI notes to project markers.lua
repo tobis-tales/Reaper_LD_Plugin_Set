@@ -15,19 +15,24 @@ local use_ma_tools_syntax = true
 
 local folder = debug.getinfo(1, "S").source:match("@?(.*[/\\])") or ""
 
-local function load_module(name)
-  local chunk = loadfile(folder .. name)
-  if not chunk then
-    reaper.ShowMessageBox(
-      name .. " is missing next to this script.\n\n" ..
-      "Please copy the whole steelblue package into the same folder.",
-      SCRIPT_TITLE,
-      0
-    )
-    return nil
-  end
+-- The only loader code left inline: something has to load the loader. The rest
+-- was copied word for word into all four plugins and now lives in
+-- steelblue_boot.lua.
+local boot_chunk = loadfile(folder .. "steelblue_boot.lua")
+if not boot_chunk then
+  reaper.ShowMessageBox(
+    "steelblue_boot.lua is missing next to this script.\n\n" ..
+    "Please copy the whole steelblue package into the same folder.",
+    SCRIPT_TITLE,
+    0
+  )
+  return
+end
 
-  return chunk()
+local BOOT = boot_chunk()
+
+local function load_module(name)
+  return BOOT.load_module(folder, name, SCRIPT_TITLE)
 end
 
 math.randomseed(math.floor((reaper.time_precise and reaper.time_precise() or os.time()) * 1000000) % 2147483647)
@@ -58,14 +63,8 @@ local function choose_scope_fallback()
   return result == 6 and "all" or "selected"
 end
 
-local function destroy_imgui_context(ctx)
-  if ctx and reaper.APIExists and reaper.APIExists("ImGui_DestroyContext") then
-    reaper.ImGui_DestroyContext(ctx)
-  end
-end
-
 local function choose_scope()
-  if not (reaper.APIExists and reaper.APIExists("ImGui_CreateContext")) then
+  if not BOOT.has_imgui() then
     return choose_scope_fallback()
   end
 
@@ -122,7 +121,7 @@ local function choose_scope()
     if open and not close_window then
       reaper.defer(loop)
     else
-      destroy_imgui_context(ctx)
+      BOOT.destroy_context(ctx)
       if choice then
         run_with_scope(choice)
       end

@@ -6,19 +6,24 @@ local SCRIPT_TITLE = "Rename selected markers"
 
 local folder = debug.getinfo(1, "S").source:match("@?(.*[/\\])") or ""
 
-local function load_module(name)
-  local chunk = loadfile(folder .. name)
-  if not chunk then
-    reaper.ShowMessageBox(
-      name .. " is missing next to this script.\n\n" ..
-      "Please copy the whole steelblue package into the same folder.",
-      SCRIPT_TITLE,
-      0
-    )
-    return nil
-  end
+-- The only loader code left inline: something has to load the loader. The rest
+-- was copied word for word into all four plugins and now lives in
+-- steelblue_boot.lua.
+local boot_chunk = loadfile(folder .. "steelblue_boot.lua")
+if not boot_chunk then
+  reaper.ShowMessageBox(
+    "steelblue_boot.lua is missing next to this script.\n\n" ..
+    "Please copy the whole steelblue package into the same folder.",
+    SCRIPT_TITLE,
+    0
+  )
+  return
+end
 
-  return chunk()
+local BOOT = boot_chunk()
+
+local function load_module(name)
+  return BOOT.load_module(folder, name, SCRIPT_TITLE)
 end
 
 local cue_name = "MarkerName"
@@ -32,12 +37,6 @@ local use_sequence_name = true
 local sequence_name = "MarkerName"
 local sequence_follows_cue_name = true
 local status_message = ""
-
-local function destroy_imgui_context(ctx)
-  if ctx and reaper.APIExists and reaper.APIExists("ImGui_DestroyContext") then
-    reaper.ImGui_DestroyContext(ctx)
-  end
-end
 
 local function imgui_text_wrapped(ctx, text)
   if reaper.APIExists and reaper.APIExists("ImGui_TextWrapped") then
@@ -467,14 +466,14 @@ local function run_gui(SB)
     if open and not close_window then
       reaper.defer(loop)
     else
-      destroy_imgui_context(ctx)
+      BOOT.destroy_context(ctx)
     end
   end
 
   reaper.defer(loop)
 end
 
-if reaper.APIExists and reaper.APIExists("ImGui_CreateContext") then
+if BOOT.has_imgui() then
   local SB = load_module("steelblue_ui.lua")
   if SB then
     run_gui(SB)
