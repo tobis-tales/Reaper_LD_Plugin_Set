@@ -54,6 +54,19 @@ local function have(...)
   return true
 end
 
+-- REAPER answers every numeric value as a float: RULER_LANE_COUNT comes back as
+-- 2.0, I_LANENUMBER as 1.0. Concatenated into a descriptor that reads
+-- "RULER_LANE_NAME:1.0", which REAPER does not parse -- so every index is
+-- rounded before it goes into a descriptor or back into I_LANENUMBER. nil stays
+-- nil, so "no lane" never turns into lane 0.
+local function lane_index(value)
+  local number = tonumber(value)
+  if not number then
+    return nil
+  end
+  return math.floor(number + 0.5)
+end
+
 function M.app_version()
   local version = reaper.GetAppVersion and reaper.GetAppVersion() or "0"
   return tonumber((version:match("^(%d+%.%d+)"))) or 0
@@ -110,7 +123,7 @@ function M.markers_by_id()
         if entry then
           local _, guid = reaper.GetSetRegionOrMarkerInfo_String(0, region_marker, "GUID", "", false)
           entry.guid = guid
-          entry.lane = reaper.GetRegionOrMarkerInfo_Value(0, region_marker, "I_LANENUMBER")
+          entry.lane = lane_index(reaper.GetRegionOrMarkerInfo_Value(0, region_marker, "I_LANENUMBER"))
         end
       end
     end
@@ -304,11 +317,12 @@ function M.lane_count()
     return 0
   end
 
-  return tonumber(lane_number("RULER_LANE_COUNT")) or 0
+  return lane_index(lane_number("RULER_LANE_COUNT")) or 0
 end
 
 function M.lane_name(index)
-  if not M.lanes_available() then
+  index = lane_index(index)
+  if not index or not M.lanes_available() then
     return ""
   end
 
@@ -317,7 +331,8 @@ function M.lane_name(index)
 end
 
 function M.lane_color(index)
-  if not M.lanes_available() then
+  index = lane_index(index)
+  if not index or not M.lanes_available() then
     return nil
   end
 
@@ -389,7 +404,7 @@ function M.ensure_lane(name, color)
   local created
   for guid, index in pairs(lane_guids()) do
     if before_guids[guid] == nil then
-      created = index
+      created = lane_index(index)
       break
     end
   end
@@ -411,7 +426,8 @@ end
 -- Moves a marker into a lane. The return value of SetRegionOrMarkerInfo_Value
 -- is documented as meaningless, so the read-back is the only proof.
 function M.set_lane(entry, index)
-  if not M.lanes_available() or not entry or not entry.guid then
+  index = lane_index(index)
+  if not index or not M.lanes_available() or not entry or not entry.guid then
     return false
   end
 
@@ -422,7 +438,7 @@ function M.set_lane(entry, index)
 
   reaper.SetRegionOrMarkerInfo_Value(0, region_marker, "I_LANENUMBER", index)
 
-  local now = reaper.GetRegionOrMarkerInfo_Value(0, region_marker, "I_LANENUMBER")
+  local now = lane_index(reaper.GetRegionOrMarkerInfo_Value(0, region_marker, "I_LANENUMBER"))
   if now ~= index then
     return false
   end
@@ -466,6 +482,8 @@ end
 -- for but could not be honoured comes back as the reason "no-lanes" alongside a
 -- perfectly good marker -- the caller decides whether that matters.
 function M.add_marker(pos, name, color, lane)
+  lane = lane_index(lane)
+
   if M.lanes_available() then
     local region_marker = reaper.AddRegionOrMarker(0, false, pos, 0, name, -1, color or 0)
     if not region_marker then
@@ -481,7 +499,7 @@ function M.add_marker(pos, name, color, lane)
     return {
       id = math.floor(reaper.GetRegionOrMarkerInfo_Value(0, region_marker, "I_NUMBER") + 0.5),
       guid = guid,
-      lane = reaper.GetRegionOrMarkerInfo_Value(0, region_marker, "I_LANENUMBER"),
+      lane = lane_index(reaper.GetRegionOrMarkerInfo_Value(0, region_marker, "I_LANENUMBER")),
       pos = pos,
       name = name,
       color = color or 0,

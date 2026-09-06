@@ -10,6 +10,10 @@
 --   * RULER_LANE_COUNT answers only on GetSetProjectInfo (numeric). Asked
 --     through GetSetProjectInfo_String it returns false, exactly as REAPER
 --     does -- that split is what the first probe run got wrong.
+--   * numbers come back as FLOATS (RULER_LANE_COUNT 2.0, I_LANENUMBER 1.0),
+--     which is what REAPER does, and the descriptor parser below accepts only
+--     "-?%d+" -- so a lane index that was not rounded builds
+--     "RULER_LANE_NAME:1.0" and falls through here exactly as it does there.
 --
 -- Lane indexes are 0-based throughout, as the API is.
 
@@ -37,7 +41,8 @@ local function copy_project()
     for key, value in pairs(entry) do
       clone[key] = value
     end
-    clone.lane = 0
+    -- keyed by guid, because a marker and a region can share an id
+    clone.lane = (scenario.marker_lanes or {})[entry.guid] or 0
     copy[index] = clone
   end
   return copy
@@ -130,7 +135,7 @@ local function build_reaper()
         return 0
       end
       if param == "I_NUMBER" then return e.id end
-      if param == "I_LANENUMBER" then return e.lane end
+      if param == "I_LANENUMBER" then return e.lane + 0.0 end
       return 0
     end
   end
@@ -159,7 +164,7 @@ local function build_reaper()
     r.GetSetProjectInfo = function(_, desc, value, is_set)
       if desc == "RULER_LANE_COUNT" then
         -- a build or project without lane support reports none
-        return scenario.lanes and #lanes or 0
+        return (scenario.lanes and #lanes or 0) + 0.0
       end
 
       if desc == "RULER_LANE_ORDER:-1" and is_set then
@@ -497,6 +502,49 @@ check(run_lane("add_marker creates in the lane", LANES_178(), function(M)
   if not entry.guid then return false, "no guid" end
   if entry.lane ~= 1 then return false, "lane " .. tostring(entry.lane) end
   return M.markers_by_id()[entry.id].lane == 1, "marker " .. entry.id .. " in lane 1"
+end))
+
+-- REAPER hands every number back as a float. An index that keeps its ".0" all
+-- the way into a descriptor builds "RULER_LANE_NAME:1.0", which REAPER does not
+-- parse -- and the failure is silent: the lane simply reads as nameless.
+check(run_lane("a lane read from REAPER still addresses it", LANES_178({
+  marker_lanes = { ["{M2}"] = 1 },
+}), function(M)
+  local marker = reaper.GetRegionOrMarker(0, -1, "{M2}")
+  local raw = reaper.GetRegionOrMarkerInfo_Value(0, marker, "I_LANENUMBER")
+  if math.type(raw) ~= "float" then return false, "the fake is too generous" end
+
+  local entry = M.markers_by_id()[2]
+  -- entry.lane came out of REAPER, and callers pass it straight back in
+  if M.lane_name(entry.lane) ~= "Snare" then
+    return false, "lane_name gave " .. string.format("%q", M.lane_name(entry.lane))
+  end
+  if M.lane_color(entry.lane) ~= 222 then
+    return false, "lane_color gave " .. tostring(M.lane_color(entry.lane))
+  end
+  if math.type(entry.lane) ~= "integer" then
+    return false, "entry.lane is a " .. tostring(math.type(entry.lane))
+  end
+  return math.type(M.lane_count()) == "integer", "1.0 in, RULER_LANE_*:1 out"
+end))
+
+check(run_lane("set_lane rounds the index it is handed", LANES_178(), function(M)
+  local entry = M.markers_by_id()[2]
+
+  -- a caller holding another marker's lane hands over 1.0, not 1
+  if not M.set_lane(entry, 1.0) then return false, "returned false" end
+
+  local call = last("set_lane")
+  if not call or call.value ~= 1 then return false, "wrote " .. tostring(call and call.value) end
+  if math.type(call.value) ~= "integer" then
+    return false, "wrote a " .. tostring(math.type(call.value)) .. " to I_LANENUMBER"
+  end
+  if math.type(entry.lane) ~= "integer" then
+    return false, "entry.lane is a " .. tostring(math.type(entry.lane))
+  end
+  -- and the lane it now says it is in is still addressable
+  if M.lane_name(entry.lane) ~= "Snare" then return false, "lane_name lost it" end
+  return entry.lane == 1, "1.0 in, integer 1 out"
 end))
 
 check(run_lane("add_marker on 7.75: no lane, and it says so", {
