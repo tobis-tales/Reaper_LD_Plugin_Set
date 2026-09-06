@@ -136,6 +136,7 @@ local function build_reaper()
       end
       if param == "I_NUMBER" then return e.id end
       if param == "I_LANENUMBER" then return e.lane + 0.0 end
+      if param == "I_CUSTOMCOLOR" then return e.color + 0.0 end
       return 0
     end
   end
@@ -246,6 +247,10 @@ local function build_reaper()
       if param == "I_LANENUMBER" then
         e.lane = value
         calls[#calls + 1] = { kind = "set_lane", guid = e.guid, value = value }
+      end
+      if param == "I_CUSTOMCOLOR" then
+        e.color = value
+        calls[#calls + 1] = { kind = "set_color", guid = e.guid, value = value }
       end
       -- REAPER documents the return value of this call as meaningless
       return 0
@@ -495,6 +500,32 @@ check(run_lane("rename on 7.75 falls back to SetProjectMarker4", {
   if call.flags ~= 0 then return false, "clear flag " .. tostring(call.flags) end
   M.rename(entry, "")
   return last("set_project_marker4").flags == 1, "clear flag 1 for an empty name"
+end))
+
+check(run_lane("set_color on 7.78 writes I_CUSTOMCOLOR via GUID", LANES_178(), function(M)
+  local entry = M.markers_by_id()[1]
+  if not M.set_color(entry, 777) then return false, "returned false" end
+  if count("set_project_marker4") ~= 0 then return false, "reached for SetProjectMarker4" end
+  local call = last("set_color")
+  if not call or call.guid ~= "{M1}" or call.value ~= 777 then return false, "wrong I_CUSTOMCOLOR call" end
+  if entry.color ~= 777 then return false, "entry still says " .. tostring(entry.color) end
+  return M.markers_by_id()[1].color == 777, "I_CUSTOMCOLOR via GUID, lane untouched"
+end))
+
+check(run_lane("set_color on 7.75 falls back to SetProjectMarker4", {
+  version = "7.75/OSX64", new_api = true,
+}, function(M)
+  local entry = M.markers_by_id()[1]
+  if not M.set_color(entry, 777) then return false, "returned false" end
+  local call = last("set_project_marker4")
+  if not call then return false, "nothing written" end
+  if call.id ~= 1 or call.pos ~= 10.0 or call.name ~= "start" then
+    return false, "id, position or name changed"
+  end
+  if call.color ~= 777 then return false, "colour " .. tostring(call.color) end
+  if call.isrgn ~= false then return false, "wrote a region" end
+  if call.flags ~= 0 then return false, "clear flag " .. tostring(call.flags) end
+  return entry.color == 777, "old call, same name and position"
 end))
 
 check(run_lane("add_marker creates in the lane", LANES_178(), function(M)

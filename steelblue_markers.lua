@@ -20,7 +20,7 @@
 
 local M = {}
 
-M.VERSION = "1.1"
+M.VERSION = "1.2"
 
 -- Why callers came up empty, so they can say something useful.
 M.NO_API = "no-api"
@@ -466,6 +466,46 @@ function M.rename(entry, name)
 
   if retval then
     entry.name = name
+  end
+
+  return retval and true or false
+end
+
+-- Recolours a marker in place, for the same reason rename does it this way: on
+-- 7.72+ only the colour is written, where SetProjectMarker4 rewrites the whole
+-- marker and puts its lane at risk.
+--
+-- Colours must always come from ColorToNative(r, g, b) | 0x1000000 -- the byte
+-- order is platform dependent, and the high bit is what tells REAPER the marker
+-- has a colour of its own instead of the lane's.
+--
+-- SetRegionOrMarkerInfo_Value reports nothing useful, so the read-back is the
+-- only proof.
+function M.set_color(entry, color)
+  if not entry then
+    return false
+  end
+
+  if M.lanes_available() and entry.guid then
+    local region_marker = reaper.GetRegionOrMarker(0, -1, entry.guid)
+    if region_marker then
+      reaper.SetRegionOrMarkerInfo_Value(0, region_marker, "I_CUSTOMCOLOR", color)
+
+      if reaper.GetRegionOrMarkerInfo_Value(0, region_marker, "I_CUSTOMCOLOR") ~= color then
+        return false
+      end
+
+      entry.color = color
+      return true
+    end
+  end
+
+  local retval = reaper.SetProjectMarker4(
+    0, entry.id, false, entry.pos, 0, entry.name, color, 0
+  )
+
+  if retval then
+    entry.color = color
   end
 
   return retval and true or false
