@@ -19,3 +19,7 @@ Steelblue_Reaper_LD_Plugin_Set.pdf
 # conductor handover for the next build stage — local only, never public
 UEBERGABE.md
 REPORT-phase-*.md
+
+# REAPER auto-backups next to saved projects
+Backups/
+*.rpp-bak
