@@ -1,7 +1,6 @@
 -- probe_lanes.lua
--- Answers what cannot be answered outside REAPER: what RULER_LANE_ORDER:-1
--- wants in order to create a lane, and how a marker behaves once it sits in
--- one.
+-- Answers what cannot be answered outside REAPER: how a ruler lane is created
+-- at all, and how a marker behaves once it sits in one.
 --
 -- HOW TO RUN
 --   1. Open a NEW, EMPTY project (File > New project tab). This script creates
@@ -12,7 +11,7 @@
 --   4. File > Save project as... > tests/fixtures/lanes_probe.RPP
 --
 -- Two functions, and which descriptor belongs to which is the thing v1 got
--- wrong (verified against the doc blocks in the 7.78 binary, 2026-09-02):
+-- wrong (verified against the doc blocks in the 7.79 binary, 2026-09-05):
 --   GetSetProjectInfo(proj, desc, value, is_set) -> number
 --     RULER_LANE_COUNT, RULER_LANE_ORDER:X, RULER_LANE_COLOR:X,
 --     RULER_LANE_HIDDEN:X, RULER_LANE_LOCKED:X, RULER_LANE_VISIBLE:X,
@@ -22,6 +21,15 @@
 --
 -- Lane indexes are 0-based in the API; the Ruler Lane Manager and the .RPP
 -- show them 1-based.
+--
+-- WHAT v3 CHANGES (probe v2 found that creating a lane fails)
+--   v2 passed a position as the VALUE of RULER_LANE_ORDER:-1 and nothing
+--   happened. The binary's own doc block reads the other way round:
+--     "RULER_LANE_ORDER:X : move lane at position X to a new position,
+--      -1 to insert a new lane"
+--   so X is the position and -1 is the value. v3 tries that first, keeps the
+--   v2 spelling as a control, and then falls back to the action
+--   "Ruler: Quick add ruler lane", which the 7.79 binary does have.
 --
 -- It writes no file and touches nothing but the open project. Every step runs
 -- in pcall, so one unsupported call cannot cut the probe short. Output is
@@ -57,8 +65,19 @@ local function set_lane_text(desc, value)
   return reaper.GetSetProjectInfo_String(0, desc, value, true)
 end
 
+-- REAPER answers every numeric descriptor as a FLOAT (2.0, not 2), and a
+-- descriptor built from one reads "RULER_LANE_NAME:2.0", which REAPER does not
+-- parse. Every index this probe puts into a descriptor goes through here first.
+local function lane_index(value)
+  local number = tonumber(value)
+  if not number then
+    return nil
+  end
+  return math.floor(number + 0.5)
+end
+
 local function lane_count()
-  return tonumber(lane_number("RULER_LANE_COUNT")) or 0
+  return lane_index(lane_number("RULER_LANE_COUNT")) or 0
 end
 
 local function list_lanes(tag)
@@ -120,7 +139,7 @@ if existing_markers > 0 or existing_tracks > 0 then
   return
 end
 
-say("PROBE", "steelblue ruler lane probe v2")
+say("PROBE", "steelblue ruler lane probe v3")
 
 -- ------------------------------------------------------------------ a) API
 
@@ -139,6 +158,10 @@ step("a", function()
     "AddProjectMarker2",
     "ColorToNative",
     "CountTracks",
+    "SectionFromUniqueID",
+    "kbd_enumerateActions",
+    "Main_OnCommand",
+    "UpdateTimeline",
   }
 
   for _, name in ipairs(names) do
@@ -161,36 +184,119 @@ step("b", function()
 end)
 
 -- -------------------------------------------------------- c) create a lane
+--
+-- Five things are unknown at once here, so each try prints what it called,
+-- what came back, and the only answer that counts: RULER_LANE_COUNT after.
+-- The first try that moves the count wins and the rest are skipped, so the
+-- console says exactly one way to create a lane rather than "one of these".
 
 local guids_before = {}
 local created_index = nil
+local create_won = nil
 
 step("c", function()
   local before = lane_count()
   guids_before = lane_guids()
   say("COUNT BEFORE CREATE", before)
 
-  -- value is the position of the new lane, 0-based, so `before` appends
-  local first = set_lane_number("RULER_LANE_ORDER:-1", before)
-  say("CREATE TRY 1 call", string.format("GetSetProjectInfo(0, \"RULER_LANE_ORDER:-1\", %d, true)", before))
-  say("CREATE TRY 1 return", tostring(first))
-  say("CREATE TRY 1 count after", lane_count())
+  local number = 0
 
-  if lane_count() == before then
-    local second = set_lane_number("RULER_LANE_ORDER:-1", 0)
-    say("CREATE TRY 2 call", "GetSetProjectInfo(0, \"RULER_LANE_ORDER:-1\", 0, true)")
-    say("CREATE TRY 2 return", tostring(second))
-    say("CREATE TRY 2 count after", lane_count())
+  -- returns true once the count has moved
+  local function try(label, call_text, run)
+    if create_won then
+      return true
+    end
+
+    number = number + 1
+    say("CREATE TRY " .. number .. " call", call_text)
+
+    local ok, result = pcall(run)
+    if not ok then
+      say("CREATE TRY " .. number .. " ERROR", result)
+    else
+      say("CREATE TRY " .. number .. " return", tostring(result))
+    end
+
+    local after = lane_count()
+    say("CREATE TRY " .. number .. " count after", after)
+
+    if after > before then
+      create_won = label
+      say("CREATE WON", label)
+      return true
+    end
+
+    return false
   end
 
-  if lane_count() == before then
-    local third = set_lane_text("RULER_LANE_TYPE", "2")
-    say("CREATE TRY 3 call", "GetSetProjectInfo_String(0, \"RULER_LANE_TYPE\", \"2\", true)")
-    say("CREATE TRY 3 retval", tostring(third))
-    say("CREATE TRY 3 count after", lane_count())
+  -- c1: the binary's own wording -- "RULER_LANE_ORDER:X : move lane at
+  -- position X to a new position, -1 to insert a new lane". Read that way X
+  -- is the target position and -1 is the value, which is the opposite of what
+  -- v2 tried.
+  try("ORDER:count = -1",
+    string.format("GetSetProjectInfo(0, \"RULER_LANE_ORDER:%d\", -1, true)", before),
+    function() return set_lane_number("RULER_LANE_ORDER:" .. before, -1) end)
+
+  -- c2: same reading, but insert at the front instead of past the end, in
+  -- case a position equal to the count is rejected as out of range
+  try("ORDER:0 = -1",
+    "GetSetProjectInfo(0, \"RULER_LANE_ORDER:0\", -1, true)",
+    function() return set_lane_number("RULER_LANE_ORDER:0", -1) end)
+
+  -- c3: -1 on both sides, the one combination v2 did not try
+  try("ORDER:-1 = -1",
+    "GetSetProjectInfo(0, \"RULER_LANE_ORDER:-1\", -1, true)",
+    function() return set_lane_number("RULER_LANE_ORDER:-1", -1) end)
+
+  -- c4: the action list. The 7.79 binary carries "Ruler: Quick add ruler
+  -- lane" and "Ruler: Add ruler lane..." (the second opens a dialog and must
+  -- NOT be fired from a script). Command IDs are not stable across builds, so
+  -- the name is looked up rather than hard-coded -- and every ruler-lane
+  -- action is printed, because the module will need one of these IDs later.
+  if not create_won then
+    if not (reaper.SectionFromUniqueID and reaper.kbd_enumerateActions and reaper.Main_OnCommand) then
+      say("ACTIONS", "kbd_enumerateActions / SectionFromUniqueID / Main_OnCommand missing")
+      return
+    end
+
+    local section = reaper.SectionFromUniqueID(0) -- 0 = Main
+    say("MAIN SECTION", tostring(section))
+
+    local quick_add_id, quick_add_name = nil, nil
+    local seen = 0
+    local index = 0
+
+    while index < 100000 do -- a cap, so a misbehaving enumerator cannot hang REAPER
+      local command_id, name = reaper.kbd_enumerateActions(section, index)
+      if not command_id or command_id == 0 then
+        break
+      end
+
+      local lower = tostring(name):lower()
+      if lower:find("ruler lane", 1, true) then
+        seen = seen + 1
+        say("ACTION " .. tostring(command_id), tostring(name))
+        if quick_add_id == nil and lower:find("quick add ruler lane", 1, true) then
+          quick_add_id, quick_add_name = command_id, name
+        end
+      end
+
+      index = index + 1
+    end
+
+    say("ACTIONS SCANNED", index)
+    say("ACTIONS MATCHING \"ruler lane\"", seen)
+    say("QUICK ADD ACTION ID", tostring(quick_add_id))
+    say("QUICK ADD ACTION NAME", tostring(quick_add_name))
+
+    if quick_add_id then
+      try("action: " .. tostring(quick_add_name),
+        string.format("Main_OnCommand(%d, 0)", quick_add_id),
+        function() return reaper.Main_OnCommand(quick_add_id, 0) end)
+    end
   end
 
-  if lane_count() == before then
+  if not create_won then
     say("CREATE", "no attempt changed RULER_LANE_COUNT")
   end
 
@@ -214,6 +320,11 @@ step("d", function()
     say("NEW LANE", "not found -- nothing to configure, later steps degrade")
     return
   end
+
+  -- a fresh lane should be default for nothing; the module must not assume it
+  -- inherits "default for new markers" from the lane it was inserted next to
+  say("NEW LANE RULER_LANE_DEFAULT (expect 0)",
+    tostring(lane_number("RULER_LANE_DEFAULT:" .. created_index)))
 
   local color = reaper.ColorToNative(70, 130, 180) | 0x1000000
   say("SET NAME retval", tostring(set_lane_text("RULER_LANE_NAME:" .. created_index, "probe")))
@@ -250,6 +361,16 @@ step("e", function()
       tostring(reaper.GetRegionOrMarkerInfo_Value(0, probe_marker, param)))
   end
 
+  -- v2 read B_VISIBLE = 0 on a fresh marker whose lane was visible. The guess
+  -- was that the flag is only computed when the ruler redraws; this settles it.
+  if reaper.UpdateTimeline then
+    reaper.UpdateTimeline()
+    say("MARKER B_VISIBLE after UpdateTimeline",
+      tostring(reaper.GetRegionOrMarkerInfo_Value(0, probe_marker, "B_VISIBLE")))
+  else
+    say("MARKER B_VISIBLE after UpdateTimeline", "UpdateTimeline missing")
+  end
+
   local ok, guid = reaper.GetSetRegionOrMarkerInfo_String(0, probe_marker, "GUID", "", false)
   probe_guid = guid
   say("MARKER GUID retval", tostring(ok))
@@ -279,6 +400,12 @@ step("f", function()
 
   say("MARKER B_VISIBLE (after set)",
     tostring(reaper.GetRegionOrMarkerInfo_Value(0, probe_marker, "B_VISIBLE")))
+
+  if reaper.UpdateTimeline then
+    reaper.UpdateTimeline()
+    say("MARKER B_VISIBLE (after set, after UpdateTimeline)",
+      tostring(reaper.GetRegionOrMarkerInfo_Value(0, probe_marker, "B_VISIBLE")))
+  end
 end)
 
 -- --------------------------------------------------------- g) hide the lane
@@ -291,12 +418,18 @@ step("g", function()
 
   say("SET HIDDEN 1 return", tostring(set_lane_number("RULER_LANE_HIDDEN:" .. created_index, 1)))
   say("READBACK HIDDEN", tostring(lane_number("RULER_LANE_HIDDEN:" .. created_index)))
+  if reaper.UpdateTimeline then
+    reaper.UpdateTimeline()
+  end
   if probe_marker then
     say("MARKER B_VISIBLE while lane hidden",
       tostring(reaper.GetRegionOrMarkerInfo_Value(0, probe_marker, "B_VISIBLE")))
   end
 
   say("SET HIDDEN 0 return", tostring(set_lane_number("RULER_LANE_HIDDEN:" .. created_index, 0)))
+  if reaper.UpdateTimeline then
+    reaper.UpdateTimeline()
+  end
   if probe_marker then
     say("MARKER B_VISIBLE after unhide",
       tostring(reaper.GetRegionOrMarkerInfo_Value(0, probe_marker, "B_VISIBLE")))
@@ -369,6 +502,8 @@ step("i", function()
 end)
 
 -- ------------------------------------------------------------------ j) end
+
+say("CREATE METHOD THAT WORKED", tostring(create_won))
 
 reaper.ShowConsoleMsg(
   "PROBE DONE - save this project as tests/fixtures/lanes_probe.RPP " ..
