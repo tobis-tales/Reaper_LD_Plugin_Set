@@ -167,11 +167,17 @@ local function build_reaper()
         return (scenario.lanes and #lanes or 0) + 0.0
       end
 
-      if desc == "RULER_LANE_ORDER:-1" and is_set then
-        calls[#calls + 1] = { kind = "lane_order", value = value }
-        if scenario.create_via == "order" then
-          insert_lane()
+      local order_position = desc:match("^RULER_LANE_ORDER:(-?%d+)$")
+      if order_position and is_set then
+        local position = tonumber(order_position)
+        calls[#calls + 1] = { kind = "lane_order", position = position, value = value }
+        if value == -1 then
+          if scenario.lane_create ~= false then
+            insert_lane()
+          end
+          return position
         end
+        -- moving a lane, not inserting one: REAPER does not create anything
         return value
       end
 
@@ -197,11 +203,8 @@ local function build_reaper()
     -- string descriptors: NAME and GUID, and nothing else
     r.GetSetProjectInfo_String = function(_, desc, value, is_set)
       if desc == "RULER_LANE_TYPE" and is_set then
+        -- 7.79 does not accept this descriptor at all; it never creates a lane
         calls[#calls + 1] = { kind = "lane_type", value = value }
-        if scenario.create_via == "type" then
-          insert_lane()
-          return true
-        end
         return false
       end
 
@@ -411,9 +414,7 @@ check(run_lane("lane_by_name: hit and miss, 0-based", LANES_178(), function(M)
   return M.lane_by_name("Hat") == nil, "no lane called Hat"
 end))
 
-check(run_lane("ensure_lane reuses, and keeps its colour", LANES_178({
-  create_via = "order",
-}), function(M)
+check(run_lane("ensure_lane reuses, and keeps its colour", LANES_178(), function(M)
   local index, reason = M.ensure_lane("Kick", 999)
   if index ~= 0 then return false, "index=" .. tostring(index) .. " reason=" .. tostring(reason) end
   if M.lane_count() ~= 2 then return false, "created one anyway: " .. M.lane_count() end
@@ -421,14 +422,18 @@ check(run_lane("ensure_lane reuses, and keeps its colour", LANES_178({
   return true, "lane 0, colour 111 untouched"
 end))
 
-check(run_lane("ensure_lane creates via RULER_LANE_ORDER:-1", LANES_178({
-  lanes = { { name = "Kick", color = 111 } }, create_via = "order",
+check(run_lane("ensure_lane creates via RULER_LANE_ORDER:<count> = -1", LANES_178({
+  lanes = { { name = "Kick", color = 111 } },
 }), function(M)
   local index, reason = M.ensure_lane("Snare", 222)
   if not index then return false, "reason=" .. tostring(reason) end
   if M.lane_count() ~= 2 then return false, "count " .. M.lane_count() end
+  if count("lane_order") ~= 1 then return false, count("lane_order") .. " ORDER attempts" end
   local call = last("lane_order")
-  if not call or call.value ~= 1 then return false, "ORDER value " .. tostring(call and call.value) end
+  if not call or call.position ~= 1 or call.value ~= -1 then
+    return false, "ORDER position " .. tostring(call and call.position) .. " value " .. tostring(call and call.value)
+  end
+  if count("lane_type") ~= 0 then return false, count("lane_type") .. " TYPE attempts" end
   -- the fake inserts at the front, so "the last lane" would answer 1 here
   if index ~= 0 then return false, "found lane " .. index .. ", not the new one" end
   if M.lane_name(0) ~= "Snare" then return false, "name " .. M.lane_name(0) end
@@ -439,19 +444,18 @@ check(run_lane("ensure_lane creates via RULER_LANE_ORDER:-1", LANES_178({
   return true, "new lane found by GUID, not by position"
 end))
 
-check(run_lane("ensure_lane falls back to RULER_LANE_TYPE", LANES_178({
-  lanes = { { name = "Kick", color = 111 } }, create_via = "type",
+check(run_lane("ensure_lane never reaches for RULER_LANE_TYPE", LANES_178({
+  lanes = { { name = "Kick", color = 111 } }, lane_create = false,
 }), function(M)
   local index, reason = M.ensure_lane("Snare", 222)
-  if not index then return false, "reason=" .. tostring(reason) end
+  if index ~= nil then return false, "claims lane " .. tostring(index) end
+  if reason ~= M.LANE_CREATE_FAILED then return false, "reason=" .. tostring(reason) end
   if count("lane_order") ~= 1 then return false, count("lane_order") .. " ORDER attempts" end
-  if count("lane_type") ~= 1 then return false, count("lane_type") .. " TYPE attempts" end
-  if M.lane_name(index) ~= "Snare" then return false, "name " .. M.lane_name(index) end
-  return M.lane_count() == 2, "ORDER once, then TYPE"
+  return count("lane_type") == 0, count("lane_type") .. " TYPE attempts"
 end))
 
 check(run_lane("ensure_lane gives up honestly", LANES_178({
-  lanes = { { name = "Kick", color = 111 } }, create_via = "none",
+  lanes = { { name = "Kick", color = 111 } }, lane_create = false,
 }), function(M)
   local index, reason = M.ensure_lane("Snare", 222)
   if index ~= nil then return false, "claims lane " .. tostring(index) end

@@ -386,16 +386,10 @@ function M.ensure_lane(name, color)
   local before_count = M.lane_count()
   local before_guids = lane_guids()
 
-  -- ASSUMPTION(probe): value passed to RULER_LANE_ORDER:-1 is the position of
-  -- the new lane, 0-based, so before_count appends it at the end
-  set_lane_number("RULER_LANE_ORDER:-1", before_count)
-
-  if M.lane_count() == before_count then
-    -- whatsnew 7.62 documents RULER_LANE_TYPE for this; the string is in
-    -- neither doc block of the 7.78 binary, so it is the fallback for
-    -- 7.62..7.7x builds, not the way
-    set_lane_text("RULER_LANE_TYPE", "2")
-  end
+  -- Verified 2026-09-06 (REAPER 7.79): X is the target position and the
+  -- value -1 means "insert"; the return value is the position, not a
+  -- success flag, so the count is the only proof.
+  set_lane_number("RULER_LANE_ORDER:" .. before_count, -1)
 
   if M.lane_count() == before_count then
     return nil, M.LANE_CREATE_FAILED
