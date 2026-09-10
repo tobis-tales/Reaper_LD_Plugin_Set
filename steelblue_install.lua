@@ -26,6 +26,7 @@ local MODULES = {
   "steelblue_markers.lua",
   "steelblue_boot.lua",
   "steelblue_matools.lua",
+  "steelblue_rename.lua",
 }
 
 -- Bundled third-party extensions, per architecture. See extensions/NOTICE.txt:

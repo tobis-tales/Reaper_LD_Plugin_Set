@@ -179,6 +179,7 @@ check(run("files land in REAPER's Scripts folder", {
     "steelblue_workspace.lua",
     "steelblue_ui.lua", "steelblue_markers.lua",
     "steelblue_boot.lua", "steelblue_matools.lua",
+    "steelblue_rename.lua",
   }
   for _, f in ipairs(want) do
     local h = io.open(dir .. f, "rb")
@@ -193,7 +194,7 @@ check(run("files land in REAPER's Scripts folder", {
       return false, "registered from outside the install dir: " .. e.path
     end
   end
-  return true, "9 files copied, actions point at the copies"
+  return true, "10 files copied, actions point at the copies"
 end))
 
 -- the last AddRemoveReaScript must commit
