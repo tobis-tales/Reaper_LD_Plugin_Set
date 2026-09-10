@@ -140,22 +140,18 @@ end
 
 local function run_gui(SB)
   local ctx = reaper.ImGui_CreateContext(SCRIPT_TITLE)
-  local cursor_pos = reaper.GetCursorPosition()
-  local measure_input = reaper.format_timestr_pos(cursor_pos, "", 2)
-  local timecode_input = reaper.format_timestr_pos(cursor_pos, "", 5)
+  -- Empty = follows the edit cursor. Each field gets its own flag, set as soon
+  -- as the user types something into it and cleared as soon as they empty it
+  -- again -- that is the whole "follow" rule.
+  local measure_input = ""
+  local timecode_input = ""
+  local measure_manual = false
+  local timecode_manual = false
   -- The SELECTION section above already tells the user to pick markers; the
   -- footer is for what HAPPENED, so it starts neutral instead of repeating the
   -- hint and contradicting a live "3 markers selected" right above it.
   local status = "Ready."
   local status_kind = nil
-
-  local function refresh_from_cursor()
-    local current = reaper.GetCursorPosition()
-    measure_input = reaper.format_timestr_pos(current, "", 2)
-    timecode_input = reaper.format_timestr_pos(current, "", 5)
-    status = "Target fields refreshed from the edit cursor."
-    status_kind = nil
-  end
 
   local function run_copy(entries, target_pos)
     if #entries == 0 then
@@ -201,6 +197,13 @@ local function run_gui(SB)
   local function loop()
     local current_cursor_pos = reaper.GetCursorPosition()
 
+    if not measure_manual then
+      measure_input = reaper.format_timestr_pos(current_cursor_pos, "", 2)
+    end
+    if not timecode_manual then
+      timecode_input = reaper.format_timestr_pos(current_cursor_pos, "", 5)
+    end
+
     local entries, reason, source = selection()
     local has_selection = #entries > 0
 
@@ -228,20 +231,24 @@ local function run_gui(SB)
       SB.section(ctx, "Target position")
 
       reaper.ImGui_PushItemWidth(ctx, 200)
-      local _
-      _, measure_input = reaper.ImGui_InputText(ctx, "measure.beats", measure_input)
-      _, timecode_input = reaper.ImGui_InputText(ctx, "hh:mm:ss:ff", timecode_input)
+      local changed
+      changed, measure_input = reaper.ImGui_InputText(ctx, "measure.beats", measure_input)
+      if changed then
+        measure_manual = trim(measure_input) ~= ""
+      end
+      changed, timecode_input = reaper.ImGui_InputText(ctx, "hh:mm:ss:ff", timecode_input)
+      if changed then
+        timecode_manual = trim(timecode_input) ~= ""
+      end
       reaper.ImGui_PopItemWidth(ctx)
+
+      SB.label(ctx, "Empty field follows the edit cursor. Type a position to pin it.")
 
       if SB.primary_button(ctx, "Copy to cursor", 200) then
         pending = function() run_copy(entries, reaper.GetCursorPosition()) end
       end
 
       reaper.ImGui_SameLine(ctx)
-
-      if SB.button(ctx, "Refresh from cursor", 200) then
-        refresh_from_cursor()
-      end
 
       if SB.button(ctx, "Copy to measure.beats", 200) then
         local target = parse_target_position(measure_input)
