@@ -9,14 +9,14 @@
 
 If you build light shows to a timeline, you probably live in REAPER's markers: one marker per cue, named for your console. These four plugins take the tedious parts of that off your hands — finding the real tempo, turning a MIDI rhythm into cues, naming a whole block at once, and copying a block to where the music repeats.
 
-Tested on **macOS and Windows**, REAPER 7.
+1.1.0 was tested on macOS; Windows was tested for 1.0.0 and the changes since are platform-neutral Lua. REAPER 7.
 
 ## The plugins
 
 | Plugin | What it does |
 | --- | --- |
 | **Live BPM Analyzer** | Reads the real tempo out of the audio to two decimals and sets the project tempo — without moving anything you have already placed. |
-| **MIDI notes to project markers** | Turns a MIDI item into markers: one per note, named after the note and coloured by pitch. Write your cue rhythm as MIDI, get cues. |
+| **MIDI notes to project markers** | Turns a MIDI item into markers: one per note, named after the note and coloured to match the track. Write your cue rhythm as MIDI, get cues. |
 | **Rename selected markers** | Builds MA-Tools cue names for a whole selection at once, with a live preview and cue numbering that wraps. |
 | **Copy Markers** | Duplicates a block of markers somewhere else, keeping their spacing, names and colours. For the chorus that comes back later in the song. |
 
@@ -26,12 +26,22 @@ Tested on **macOS and Windows**, REAPER 7.
   <img src="Tutorials/img/copy-01a-window.png" alt="Copy Markers" width="46%">
 </div>
 
+## What's new in 1.1.0
+
+- **Rename selected markers** — three free-text fields (cue name, command, sequence name; leave one empty to skip it), a "Reset to defaults" button, and an optional colour (random or last used). Recognises existing MA-Tools syntax instead of wrapping it a second time, and keeps the marker's ruler lane.
+- **MIDI notes to project markers** — one ruler lane per track (named after the track, without the `(12)`-style suffix), cue number by pitch rank, markers and lane coloured to match the track, a command field (default `GO`), an option to replace existing markers in these lanes, and a warning when two tracks share a name.
+- **Copy Markers** — copies keep their ruler lane, and the target fields now follow the edit cursor.
+- **Live BPM Analyzer** — live analysis no longer stalls playback (108 ms → 3 ms per update); after a seek or start, the window rebuilds from the cursor (up to 4 s for the first reading); the footer shows the analysis time.
+- All four plugins now tell you on startup if ReaImGui or js_ReaScriptAPI is missing.
+
 ## Install
 
 **Download the package for your system from the [latest release](../../releases/latest):**
 
 - macOS → `steelblue-LD-Plugin-Set-macOS.dmg`
 - Windows → `steelblue-LD-Plugin-Set-Windows.zip`
+
+Needs REAPER 7.x; ruler lanes need REAPER 7.72 or newer.
 
 Then, in REAPER — one step:
 
@@ -65,6 +75,8 @@ The [`Demo Project/`](Demo%20Project) folder holds a small REAPER project — a 
 ## Guides
 
 One page per plugin, with screenshots, under [`Tutorials/`](Tutorials) (open `index.html`), and the same guides as PDF in the package. There is also a short phone-format walkthrough of Copy Markers at [`Tutorials/video/`](Tutorials/video).
+
+The guides and videos still show version 1.0. Where the window looks different (Rename's three text fields, MIDI's ruler lanes), the plugin is right and the guide is old; updated guides come with version 2.
 
 ## Building from source
 
