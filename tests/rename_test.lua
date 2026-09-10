@@ -260,37 +260,153 @@ check(run("an empty field leaves its element out", {}, function(hook)
   return true, "6 field combinations"
 end))
 
+-- The full name is checked, not just the number in it: the cue name proves
+-- which marker the run took as its template, and only the number changes from
+-- marker to marker.
+local function names_are(wanted)
+  for id, name in pairs(wanted) do
+    if marker(id).name ~= name then
+      return false, "marker " .. id .. " is " .. marker(id).name .. ", not " .. name
+    end
+  end
+  return true
+end
+
 check(run("multiple cues wrap in click order", {}, function(hook, MARKERS)
   hook.set_state({ create_multiple_cues = true, multiple_cue_count = 5 })
-  -- clicked last marker first
+  -- clicked Crash first, so Crash is the template for all six
   local entries = entries_for(MARKERS, { 6, 5, 4, 3, 2, 1 }, "manager")
   if hook.run_rename(entries, "manager") ~= 6 then return false, "did not rename 6" end
 
-  local wanted = { [6] = 1, [5] = 2, [4] = 3, [3] = 4, [2] = 5, [1] = 1 }
-  for id, number in pairs(wanted) do
-    local expected = "(" .. number .. ")"
-    if not marker(id).name:find(expected, 1, true) then
-      return false, "marker " .. id .. " is " .. marker(id).name
-    end
-  end
+  local ok, detail = names_are({
+    [6] = "Crash(1)[Top]^Crash^",
+    [5] = "Crash(2)[Top]^Crash^",
+    [4] = "Crash(3)[Top]^Crash^",
+    [3] = "Crash(4)[Top]^Crash^",
+    [2] = "Crash(5)[Top]^Crash^",
+    [1] = "Crash(1)[Top]^Crash^",
+  })
+  if not ok then return false, detail end
 
-  return true, "1 2 3 4 5 1 along the click order"
+  return true, "all six are Crash, numbered 1 2 3 4 5 1 in click order"
 end))
 
 check(run("without click order the cues follow the timeline", {}, function(hook, MARKERS)
   hook.set_state({ create_multiple_cues = true, multiple_cue_count = 5 })
-  -- arrange view hands them over unordered, and out of timeline order here
+  -- arrange view hands them over unordered, and out of timeline order here;
+  -- the earliest marker (Kick) becomes the template
   local entries = entries_for(MARKERS, { 4, 1, 6, 3, 5, 2 }, "arrange")
   if hook.run_rename(entries, "arrange") ~= 6 then return false, "did not rename 6" end
 
-  local wanted = { [1] = 1, [2] = 2, [3] = 3, [4] = 4, [5] = 5, [6] = 1 }
-  for id, number in pairs(wanted) do
-    if not marker(id).name:find("(" .. number .. ")", 1, true) then
-      return false, "marker " .. id .. " is " .. marker(id).name
-    end
+  local ok, detail = names_are({
+    [1] = "Kick(1)[Top]^Kick^",
+    [2] = "Kick(2)[Top]^Kick^",
+    [3] = "Kick(3)[Top]^Kick^",
+    [4] = "Kick(4)[Top]^Kick^",
+    [5] = "Kick(5)[Top]^Kick^",
+    [6] = "Kick(1)[Top]^Kick^",
+  })
+  if not ok then return false, detail end
+
+  return true, "all six are Kick, numbered 1 2 3 4 5 1 along the timeline"
+end))
+
+check(run("MarkerName means the first selected marker", {}, function(hook, MARKERS)
+  -- clicked Hat, then Kick, then Snare -- and all three end up called Hat
+  local entries = entries_for(MARKERS, { 3, 1, 2 }, "manager")
+  if hook.run_rename(entries, "manager") ~= 3 then return false, "did not rename 3" end
+
+  local ok, detail = names_are({
+    [3] = "Hat(1)[Top]^Hat^",
+    [1] = "Hat(1)[Top]^Hat^",
+    [2] = "Hat(1)[Top]^Hat^",
+  })
+  if not ok then return false, detail end
+
+  return true, "Hat, Hat, Hat -- one cue list"
+end))
+
+check(run("the first marker's syntax defines the base", {}, function(hook, MARKERS)
+  marker(1).name = "Kick(1)[Top]^Kick^"
+
+  local entries = entries_for(MARKERS, { 1, 2 }, "manager")
+  if hook.run_rename(entries, "manager") ~= 2 then return false, "did not rename 2" end
+
+  local ok, detail = names_are({
+    [1] = "Kick(1)[Top]^Kick^",
+    [2] = "Kick(1)[Top]^Kick^",
+  })
+  if not ok then return false, detail end
+
+  return true, "no double wrapping, and Snare becomes Kick"
+end))
+
+check(run("arrange picks the earliest marker as the template", {}, function(hook, MARKERS)
+  local entries = entries_for(MARKERS, { 4, 1, 6 }, "arrange")
+  if hook.run_rename(entries, "arrange") ~= 3 then return false, "did not rename 3" end
+
+  local ok, detail = names_are({
+    [4] = "Kick(1)[Top]^Kick^",
+    [1] = "Kick(1)[Top]^Kick^",
+    [6] = "Kick(1)[Top]^Kick^",
+  })
+  if not ok then return false, detail end
+
+  return true, "Kick at 5.0 s wins, though it was handed over second"
+end))
+
+check(run("prefill reads the first marker in numbering order", {}, function(hook, MARKERS)
+  marker(3).name = "Hat(2)[GO]^Main^"
+
+  -- Hat was clicked first, so its syntax fills the fields -- not Kick's, which
+  -- has none and would have used up the one chance
+  local entries = entries_for(MARKERS, { 3, 1 }, "manager")
+  if not hook.prefill_from_selection(entries, "manager") then return false, "returned false" end
+
+  local s = hook.get_state()
+  if s.command_name ~= "GO" then return false, "command " .. string.format("%q", s.command_name) end
+  if s.cue_number ~= "2" then return false, "number " .. string.format("%q", s.cue_number) end
+  if s.sequence_name ~= "Main" then return false, "sequence " .. s.sequence_name end
+
+  return true, "GO, 2, Main -- from the marker clicked first"
+end))
+
+-- The arrange fallback is the case where the list order and the numbering order
+-- genuinely differ: the manager already hands its entries over in click order,
+-- so there entries[1] and ordered[1] are the same marker either way.
+check(run("prefill without a click order reads the earliest marker", {}, function(hook, MARKERS)
+  marker(1).name = "Kick(4)[On]^Solo^"
+
+  -- Tom comes first in the list, Kick is first on the timeline
+  local entries = entries_for(MARKERS, { 4, 1, 6 }, "arrange")
+  if not hook.prefill_from_selection(entries, "arrange") then
+    return false, "took Tom, which has no syntax"
   end
 
-  return true, "1 2 3 4 5 1 along the timeline"
+  local s = hook.get_state()
+  if s.command_name ~= "On" then return false, "command " .. string.format("%q", s.command_name) end
+  if s.cue_number ~= "4" then return false, "number " .. string.format("%q", s.cue_number) end
+  if s.sequence_name ~= "Solo" then return false, "sequence " .. s.sequence_name end
+
+  return true, "On, 4, Solo -- from Kick at 5.0 s, not from Tom"
+end))
+
+-- What the preview shows must be the marker the rename will use, so the pick
+-- itself is checked directly.
+check(run("the template is the same marker everywhere", {}, function(hook, MARKERS)
+  local clicked = hook.template_for(entries_for(MARKERS, { 6, 5, 4 }, "manager"), "manager")
+  if not clicked or clicked.id ~= 6 then
+    return false, "manager picked " .. tostring(clicked and clicked.id)
+  end
+
+  local earliest = hook.template_for(entries_for(MARKERS, { 4, 1, 6 }, "arrange"), "arrange")
+  if not earliest or earliest.id ~= 1 then
+    return false, "arrange picked " .. tostring(earliest and earliest.id)
+  end
+
+  if hook.template_for({}, "manager") ~= nil then return false, "invented a template" end
+
+  return true, "clicked first / earliest / nothing"
 end))
 
 check(run("a marker with syntax is not wrapped twice", {}, function(hook)
@@ -468,7 +584,8 @@ check(run("on 7.75 renaming falls back to SetProjectMarker4", { lane_api = false
   if count("set_project_marker4") ~= 3 then return false, count("set_project_marker4") .. " writes" end
   local call = last("set_project_marker4")
   if call.pos ~= 15.0 or call.id ~= 3 then return false, "id or position changed" end
-  return marker(3).name == "Hat(1)[Top]^Hat^", "3 markers via the old call"
+  -- Kick was clicked first, so Hat is renamed to Kick like the rest
+  return marker(3).name == "Kick(1)[Top]^Kick^", "3 markers via the old call"
 end))
 
 check(run("an empty selection writes nothing", {}, function(hook)

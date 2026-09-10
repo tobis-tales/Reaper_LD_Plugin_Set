@@ -115,9 +115,9 @@ end
 
 -- ------------------------------------------------------------- marker names
 
--- What the MarkerName placeholder stands for. A marker that already carries MA
--- syntax contributes only its cue name, so running the script twice cannot wrap
--- "Kick(1)[Top]^Kick^" into itself again.
+-- What the MarkerName placeholder stands for, given the template marker's name.
+-- A marker that already carries MA syntax contributes only its cue name, so
+-- running the script twice cannot wrap "Kick(1)[Top]^Kick^" into itself again.
 local function base_name(marker_name)
   local parts = MA.parse(marker_name)
   return parts and (parts.cue or "") or marker_name
@@ -167,8 +167,8 @@ local function get_cue_number_for_marker(marker_offset)
   return format_cue_number(parse_cue_number() + number_offset)
 end
 
-local function build_marker_name(marker_name, marker_offset)
-  local base = base_name(marker_name)
+local function build_marker_name(template_name, marker_offset)
+  local base = base_name(template_name)
 
   local number = nil
   if state.use_cue_number then
@@ -183,11 +183,46 @@ local function build_marker_name(marker_name, marker_offset)
   })
 end
 
--- Fills the fields from the syntax a marker already carries, so the first thing
--- the user sees is what is there rather than the defaults. Happens once, on the
--- first poll that finds a selection; a marker without syntax changes nothing but
--- still uses up the one chance, because the alternative is fields that rewrite
--- themselves while the user is typing in them.
+-- The order a run works in. Cue numbers follow the order the user clicked in,
+-- which only the manager knows; the arrange fallback has no click order, so it
+-- goes along the timeline instead -- that is what the missing JS extension
+-- costs. The first entry is also the template (below).
+local function ordered_for_numbering(entries, source)
+  if source ~= "manager" then
+    return MARKERS.sorted_by_position(entries)
+  end
+
+  local ordered = {}
+  for index, entry in ipairs(entries) do
+    ordered[index] = entry
+  end
+
+  table.sort(ordered, function(left, right)
+    return (left.selection_order or 0) < (right.selection_order or 0)
+  end)
+
+  return ordered
+end
+
+-- The one marker a whole run is named after: the one clicked first, or the
+-- earliest on the timeline when there is no click order. MarkerName means THIS
+-- marker's name for every marker of the run -- selecting Kick, Snare and Hat
+-- and renaming gives three markers called Kick, which is the point: they belong
+-- to one cue list. The preview, the prefill and the rename all ask this, so
+-- what the preview shows is what the run writes.
+local function template_for(entries, source)
+  if not entries or #entries == 0 then
+    return nil
+  end
+
+  return ordered_for_numbering(entries, source)[1]
+end
+
+-- Fills the fields from the syntax the template marker already carries, so the
+-- first thing the user sees is what is there rather than the defaults. Happens
+-- once, on the first poll that finds a selection; a marker without syntax
+-- changes nothing but still uses up the one chance, because the alternative is
+-- fields that rewrite themselves while the user is typing in them.
 local function prefill_from(marker_name)
   if prefilled then
     return false
@@ -219,6 +254,15 @@ local function prefill_from(marker_name)
 
   set_status("Fields taken from the selected marker.")
   return true
+end
+
+local function prefill_from_selection(entries, source)
+  local template = template_for(entries, source)
+  if not template then
+    return false
+  end
+
+  return prefill_from(template.name)
 end
 
 -- ------------------------------------------------------------------ colour
@@ -262,26 +306,6 @@ end
 
 -- ------------------------------------------------------------------ renaming
 
--- Cue numbers follow the order the user clicked in, which only the manager
--- knows. The arrange fallback has no click order, so it numbers along the
--- timeline instead -- that is what the missing JS extension costs.
-local function ordered_for_numbering(entries, source)
-  if source ~= "manager" then
-    return MARKERS.sorted_by_position(entries)
-  end
-
-  local ordered = {}
-  for index, entry in ipairs(entries) do
-    ordered[index] = entry
-  end
-
-  table.sort(ordered, function(left, right)
-    return (left.selection_order or 0) < (right.selection_order or 0)
-  end)
-
-  return ordered
-end
-
 local function run_rename(entries, source)
   entries = entries or {}
 
@@ -291,8 +315,9 @@ local function run_rename(entries, source)
   end
 
   local ordered = ordered_for_numbering(entries, source)
+  local template = ordered[1].name
 
-  if build_marker_name(ordered[1].name, 0) == "" then
+  if build_marker_name(template, 0) == "" then
     set_status("Enter at least a name or one syntax element.", "warning")
     return 0
   end
@@ -304,7 +329,8 @@ local function run_rename(entries, source)
   reaper.PreventUIRefresh(1)
 
   for index, entry in ipairs(ordered) do
-    local new_name = build_marker_name(entry.name, index - 1)
+    -- every marker of the run is named after the template, not after itself
+    local new_name = build_marker_name(template, index - 1)
     MARKERS.rename(entry, new_name)
 
     if colour then
@@ -349,7 +375,7 @@ local function run_fallback()
     return
   end
 
-  prefill_from(entries[1].name)
+  prefill_from_selection(entries, source)
 
   -- No colour option here on purpose: GetUserInputs is a row of text boxes, and
   -- a colour is only worth offering next to a swatch that shows it.
@@ -428,7 +454,7 @@ local function run_gui(SB)
       cached_entries, cached_reason, cached_source = MARKERS.selected()
 
       if not prefilled and #cached_entries > 0 then
-        prefill_from(cached_entries[1].name)
+        prefill_from_selection(cached_entries, cached_source)
       end
     end
 
@@ -440,8 +466,10 @@ local function run_gui(SB)
 
     local entries, _, source = selection()
     local selected_count = #entries
-    local preview_source_name = entries[1] and entries[1].name or "MarkerName"
-    local preview_name = build_marker_name(preview_source_name, 0)
+    -- the same marker the run will take its name from, so the preview cannot
+    -- show one thing and the rename write another
+    local template = template_for(entries, source)
+    local preview_name = build_marker_name(template and template.name or "MarkerName", 0)
 
     local visible, open, font = SB.begin_window(ctx, SCRIPT_TITLE, 620)
 
@@ -480,8 +508,13 @@ local function run_gui(SB)
 
       local _
 
+      -- the two name fields together, then the numbering row, then the command:
+      -- cue name and sequence name are the pair the user edits as one thought
       reaper.ImGui_SetNextItemWidth(ctx, 360)
       _, state.cue_name = reaper.ImGui_InputText(ctx, "Cue name", state.cue_name)
+
+      reaper.ImGui_SetNextItemWidth(ctx, 360)
+      _, state.sequence_name = reaper.ImGui_InputText(ctx, "Sequence name", state.sequence_name)
 
       _, state.use_cue_number = reaper.ImGui_Checkbox(ctx, "Cue number", state.use_cue_number)
 
@@ -504,10 +537,7 @@ local function run_gui(SB)
       reaper.ImGui_SetNextItemWidth(ctx, 360)
       _, state.command_name = reaper.ImGui_InputText(ctx, "Command", state.command_name)
 
-      reaper.ImGui_SetNextItemWidth(ctx, 360)
-      _, state.sequence_name = reaper.ImGui_InputText(ctx, "Sequence name", state.sequence_name)
-
-      SB.label(ctx, "Empty field leaves that element out. MarkerName = the marker's own name.")
+      SB.label(ctx, "Empty field leaves that element out. MarkerName = the name of the first selected marker.")
 
       reaper.ImGui_Separator(ctx)
       SB.section(ctx, "Colour")
@@ -546,7 +576,7 @@ local function run_gui(SB)
       SB.section(ctx, "Reference")
 
       imgui_text_wrapped(ctx, "One sequence is generated per marker colour. The default colour (red) is the main cue list.")
-      SB.label(ctx, "MarkerName    the marker's own name, or its cue name if it already has MA syntax")
+      SB.label(ctx, "MarkerName    the first selected marker's name, or its cue name if it already has MA syntax")
       SB.label(ctx, "Cue name      name of the cue")
       SB.label(ctx, "(CueNumber)   cue number, for triggering the same cue repeatedly")
       SB.label(ctx, "Multiple      increments the cue number in timeline order")
@@ -605,6 +635,8 @@ if TEST_HOOK then
   TEST_HOOK.base_name = base_name
   TEST_HOOK.build_marker_name = build_marker_name
   TEST_HOOK.prefill_from = prefill_from
+  TEST_HOOK.prefill_from_selection = prefill_from_selection
+  TEST_HOOK.template_for = template_for
   TEST_HOOK.pick_colour = pick_colour
   TEST_HOOK.next_random_colour = next_random_colour
   TEST_HOOK.run_rename = run_rename
