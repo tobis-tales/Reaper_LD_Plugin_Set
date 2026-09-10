@@ -89,7 +89,28 @@ local function make_reaper()
           if key == "ImGui_Begin" then return true, true end
           if key == "ImGui_GetCursorScreenPos" then return 100, 100 end
           if key == "ImGui_GetContentRegionAvail" then return 400, 300 end
+          if key == "ImGui_GetCursorPos" then return 12, 12 end
+          if key == "ImGui_GetCursorPosX" then return 12 end
+          if key == "ImGui_GetCursorPosY" then return 12 end
+          if key == "ImGui_GetFrameHeight" then return 23 end
           if key == "ImGui_CalcTextSize" then return 50, 12 end
+          -- A submitted item has a rect; the workspace reads the tab's one to
+          -- place the shortcut hint and the underline into it.
+          if key == "ImGui_GetItemRectMin" then return 100, 100 end
+          if key == "ImGui_GetItemRectMax" then return 220, 124 end
+          -- Docking: the workspace ORs the flag into whatever is set.
+          if key == "ImGui_GetConfigVar" then return 0 end
+          -- Undocked for the first frames, docked from then on, so one run
+          -- renders both states: the "Dock" button, and the header without it.
+          if key == "ImGui_IsWindowDocked" then return state.frame >= 10 end
+          -- Real tab bars hand "true" to exactly one tab item -- the selected
+          -- one. Returning it for every tab would leave every tab looking
+          -- active at once and hide an unbalanced EndTabItem.
+          if key == "ImGui_BeginTabBar" then state.tab_items = 0 return true end
+          if key == "ImGui_BeginTabItem" then
+            state.tab_items = state.tab_items + 1
+            return state.tab_items == 1
+          end
           if key == "ImGui_Button" then return false end
           if key == "ImGui_Checkbox" then return false, a end
           if key == "ImGui_InputText" then return false, "text" end
@@ -115,14 +136,15 @@ local plugins = {
   "CopyMarkers.lua",
   "MIDI notes to project markers.lua",
   "Rename selected markers.lua",
+  "steelblue_workspace.lua",
 }
 
 local fails = 0
-print("rendering each plugin for 30 frames against a fake REAPER:\n")
+print("rendering each script for 30 frames against a fake REAPER:\n")
 
 for _, name in ipairs(plugins) do
   state = { frame = 0, colors = 0, vars = 0, fonts = 0, windows = 0, widths = 0,
-            missing = {}, messages = {} }
+            tab_items = 0, missing = {}, messages = {} }
 
   local get_deferred
   reaper, get_deferred = make_reaper()
