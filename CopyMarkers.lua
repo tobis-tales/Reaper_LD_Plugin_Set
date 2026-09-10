@@ -67,6 +67,8 @@ end
 
 -- Spacing is preserved relative to the earliest selected marker, so the copy
 -- must run in timeline order regardless of the order they were clicked in.
+-- Each copy keeps the original's ruler lane (marker.lane is nil below 7.72,
+-- which add_marker treats as "no lane requested" -- same result as before).
 local function copy_markers(entries, target_pos)
   local markers = MARKERS.sorted_by_position(entries)
   local source_start = markers[1].pos
@@ -74,16 +76,20 @@ local function copy_markers(entries, target_pos)
   reaper.Undo_BeginBlock()
   reaper.PreventUIRefresh(1)
 
+  local copied = 0
   for _, marker in ipairs(markers) do
     local new_pos = target_pos + (marker.pos - source_start)
-    reaper.AddProjectMarker2(0, false, new_pos, 0, marker.name, -1, marker.color)
+    local entry = MARKERS.add_marker(new_pos, marker.name, marker.color, marker.lane)
+    if entry then
+      copied = copied + 1
+    end
   end
 
   reaper.PreventUIRefresh(-1)
   reaper.UpdateArrange()
   reaper.Undo_EndBlock("Copy project markers", -1)
 
-  return #markers
+  return copied
 end
 
 local function selection_hint(reason)
@@ -270,6 +276,17 @@ local function run_gui(SB)
 
   reaper.defer(loop)
 end
+
+-- Both extensions are optional here, so the answer is ignored -- the point is
+-- that the user hears about it once instead of wondering why the window looks
+-- different or the selection comes from the arrange view.
+BOOT.check_dependencies({
+  title = SCRIPT_TITLE,
+  imgui = "optional",
+  imgui_cost = "the window is a plain dialog.",
+  js = "optional",
+  js_cost = "the selection is read from the arrange view instead of the Region/Marker Manager.",
+})
 
 if BOOT.has_imgui() then
   local SB = load_module("steelblue_ui.lua")

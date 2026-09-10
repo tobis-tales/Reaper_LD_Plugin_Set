@@ -1268,8 +1268,8 @@ if TEST_HOOK then
   return
 end
 
-if not BOOT.has_imgui() then
-  reaper.ShowMessageBox("ReaImGui is required for the live BPM analyzer window.", SCRIPT_TITLE, 0)
+local ok = BOOT.check_dependencies({ title = SCRIPT_TITLE, imgui = "required" })
+if not ok then
   return
 end
 
