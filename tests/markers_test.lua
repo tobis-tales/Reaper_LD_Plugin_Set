@@ -151,6 +151,19 @@ local function build_reaper()
     return true
   end
 
+  -- deletes by the DISPLAYED number, so a marker and a region can share an id
+  -- and only the marker must go
+  r.DeleteProjectMarker = function(_, id, isrgn)
+    calls[#calls + 1] = { kind = "delete", id = id, isrgn = isrgn }
+    for index, e in ipairs(PROJECT) do
+      if e.id == id and e.is_region == isrgn then
+        table.remove(PROJECT, index)
+        return true
+      end
+    end
+    return false
+  end
+
   r.AddProjectMarker2 = function(_, isrgn, pos, rgnend, name, wantidx, color)
     next_marker_id = next_marker_id + 1
     PROJECT[#PROJECT + 1] = {
@@ -580,6 +593,36 @@ check(run_lane("set_lane rounds the index it is handed", LANES_178(), function(M
   -- and the lane it now says it is in is still addressable
   if M.lane_name(entry.lane) ~= "Snare" then return false, "lane_name lost it" end
   return entry.lane == 1, "1.0 in, integer 1 out"
+end))
+
+check(run_lane("markers_in_lane lists only that lane, in order", LANES_178({
+  marker_lanes = { ["{M1}"] = 1, ["{M3}"] = 1, ["{M2}"] = 0 },
+}), function(M)
+  local lane1 = M.markers_in_lane(1)
+  if #lane1 ~= 2 then return false, "got " .. #lane1 .. " markers" end
+  -- M3 sits at 5.0, M1 at 10.0: timeline order, not id order
+  if lane1[1].id ~= 3 or lane1[2].id ~= 1 then
+    return false, "order " .. lane1[1].id .. "," .. lane1[2].id
+  end
+
+  local lane0 = M.markers_in_lane(0)
+  if #lane0 ~= 1 or lane0[1].id ~= 2 then return false, "lane 0 has " .. #lane0 end
+  return #M.markers_in_lane(2) == 0, "lane 1: markers 3 then 1"
+end))
+
+check(run_lane("delete_marker removes by displayed id", LANES_178(), function(M)
+  local entry = M.markers_by_id()[1]
+  if not M.delete_marker(entry) then return false, "returned false" end
+
+  local call = last("delete")
+  if not call or call.id ~= 1 then return false, "deleted id " .. tostring(call and call.id) end
+  if call.isrgn ~= false then return false, "asked for a region" end
+  if M.markers_by_id()[1] ~= nil then return false, "marker 1 is still there" end
+  if M.markers_by_id()[2] == nil then return false, "took marker 2 with it" end
+
+  -- region 1 shares the id and must survive
+  local region = reaper.GetRegionOrMarker(0, -1, "{R1}")
+  return region ~= nil, "marker 1 gone, region 1 kept"
 end))
 
 check(run_lane("add_marker on 7.75: no lane, and it says so", {

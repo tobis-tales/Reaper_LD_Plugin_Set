@@ -20,7 +20,7 @@
 
 local M = {}
 
-M.VERSION = "1.2"
+M.VERSION = "1.3"
 
 -- Why callers came up empty, so they can say something useful.
 M.NO_API = "no-api"
@@ -553,6 +553,38 @@ function M.add_marker(pos, name, color, lane)
     name = name,
     color = color or 0,
   }, lane and M.NO_LANES or nil
+end
+
+-- Everything sitting in one lane, in timeline order. Answers empty rather than
+-- nil when the build has no lanes, so a caller can loop over it either way.
+--
+-- Lane indexes arrive from REAPER as floats; both sides of the comparison go
+-- through lane_index so 1 and 1.0 are the same lane.
+function M.markers_in_lane(index)
+  index = lane_index(index)
+  if not index or not M.lanes_available() then
+    return {}
+  end
+
+  local entries = {}
+  for _, entry in pairs(M.markers_by_id()) do
+    if entry.lane == index then
+      entries[#entries + 1] = entry
+    end
+  end
+
+  return M.sorted_by_position(entries)
+end
+
+-- Deletes a marker. DeleteProjectMarker takes the DISPLAYED number (the one the
+-- manager shows, entry.id), never an index -- an index would count regions too
+-- and delete the wrong thing.
+function M.delete_marker(entry)
+  if not entry or not entry.id or not reaper.DeleteProjectMarker then
+    return false
+  end
+
+  return reaper.DeleteProjectMarker(0, entry.id, false) and true or false
 end
 
 -- A copy in timeline order. The input keeps the caller's click order, which
