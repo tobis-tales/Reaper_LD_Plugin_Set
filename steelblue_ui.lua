@@ -504,4 +504,272 @@ function SB.end_window(ctx, visible, font_pushed)
   SB.pop_theme(ctx)
 end
 
+
+-- ------------------------------------------------- the docked workspace (v2)
+--
+-- Everything below serves steelblue_workspace.lua, the one window that will
+-- hold the plugins as tabs. The four single-script plugins keep using
+-- begin_window/header above, unchanged.
+
+-- Width of a string in the CURRENT font, or nil when the build cannot say.
+-- Used only to place drawn decoration, never to size a window.
+local function text_width(ctx, text)
+  if not reaper.ImGui_CalcTextSize then
+    return nil
+  end
+
+  local ok, w = pcall(reaper.ImGui_CalcTextSize, ctx, text)
+  if ok and type(w) == "number" then
+    return w
+  end
+
+  return nil
+end
+
+-- Like begin_window, but for a window that lives in one of REAPER's dockers.
+--
+-- Three differences, all of them consequences of the docker owning the size:
+--   * no AlwaysAutoResize and no size constraints -- a docked window fills the
+--     docker, and asking it to hug its content fights that;
+--   * no header -- the workspace draws its own, richer band with header_bar;
+--   * opts.dock_now asks for the docker BEFORE Begin.
+--
+-- The dock request uses Cond_Always on purpose. Probe 2026-09-11 (REAPER 7.79,
+-- tests/probe_dock.lua) showed the placement is not persistent: after a REAPER
+-- restart the window comes back floating even though Cond_FirstUseEver was set
+-- on every start. So the caller asks again on the first frame of every run --
+-- and remembers it when the user pulls the window out on purpose, because
+-- Cond_Always would otherwise drag it straight back.
+--
+-- end_window is the same function as for every other window.
+function SB.begin_dock_window(ctx, title, opts)
+  opts = opts or {}
+
+  SB.attach_font(ctx)
+  SB.push_theme(ctx)
+
+  if opts.dock_now and reaper.ImGui_SetNextWindowDockID and reaper.ImGui_Cond_Always then
+    reaper.ImGui_SetNextWindowDockID(ctx, opts.dock_id or -1, reaper.ImGui_Cond_Always())
+  end
+
+  local visible, open = reaper.ImGui_Begin(ctx, title, true, 0)
+
+  local font_pushed = false
+  if visible then
+    font_pushed = SB.push_font(ctx, SB.size.body)
+  end
+
+  return visible, open, font_pushed
+end
+
+-- The workspace's brand band: mark, wordmark, and two callbacks that may hang
+-- real items into it -- the BPM block on the left, the selection read-out on
+-- the right.
+--
+-- Mark and wordmark are DRAWN, not submitted, exactly as in SB.header:
+-- decoration must never drive layout. The callbacks are different -- they are
+-- allowed to submit items, and right-aligning inside them is fine here because
+-- a docked window has a width the docker decides, not one its content decides.
+--
+-- The band reserves its height once, with a Dummy of width 1, after the cursor
+-- has been put back where it started. It reaches `height` below the cursor and
+-- up into the window padding above it, so on screen it is that bit taller --
+-- same construction as SB.header.
+function SB.header_bar(ctx, opts)
+  opts = opts or {}
+
+  local height = opts.height or 40
+  local pad = SB.WINDOW_PADDING
+  local rule = 2
+
+  local lx, ly = reaper.ImGui_GetCursorPos(ctx)
+  lx, ly = lx or 0, ly or 0
+
+  local x, y = reaper.ImGui_GetCursorScreenPos(ctx)
+  local width = reaper.ImGui_GetContentRegionAvail(ctx) or 0
+  local dl = reaper.ImGui_GetWindowDrawList(ctx)
+
+  local band_top = y - pad
+  local band_bottom = y + height - rule
+  local band_mid = (band_top + band_bottom) / 2
+
+  local mark_h = 22
+  local mark_w = mark_h * MARK_RATIO
+  local gap = 10
+
+  if dl then
+    reaper.ImGui_DrawList_AddRectFilled(dl, x - pad, band_top, x + width + pad, y + height, C.header_bg)
+    reaper.ImGui_DrawList_AddRectFilled(dl, x - pad, band_bottom, x + width + pad, y + height, C.blue)
+
+    SB.logo_mark(ctx, x, band_mid - (mark_h / 2), mark_h)
+
+    local sub = 9
+    local text_h = SB.size.body + sub
+    local text_top = band_mid - (text_h / 2)
+    SB.draw_text(ctx, dl, x + mark_w + gap, text_top, C.text, "steelblue", SB.size.body)
+    SB.draw_text(ctx, dl, x + mark_w + gap, text_top + SB.size.body, C.text_muted, "LD TOOLS", sub)
+  end
+
+  -- Centre one row of ordinary items on the band instead of nudging them by
+  -- hand, so nothing drifts if the band or the font size changes.
+  local frame_h = 23
+  if reaper.ImGui_GetFrameHeight then
+    local ok, h = pcall(reaper.ImGui_GetFrameHeight, ctx)
+    if ok and type(h) == "number" and h > 0 then
+      frame_h = h
+    end
+  end
+  local row_y = ly + math.max(0, ((height - rule) - frame_h) / 2)
+
+  if opts.left then
+    local wordmark = text_width(ctx, "steelblue") or 60
+    reaper.ImGui_SetCursorPos(ctx, lx + mark_w + gap + wordmark + 24, row_y)
+    opts.left(ctx)
+  end
+
+  if opts.right then
+    reaper.ImGui_SetCursorPos(ctx, lx, row_y)
+    opts.right(ctx)
+  end
+
+  reaper.ImGui_SetCursorPos(ctx, lx, ly)
+  reaper.ImGui_Dummy(ctx, 1, height)
+end
+
+-- Which tab id the tab bar reported last frame, per context. See `force` below.
+local tab_reported = setmetatable({}, { __mode = "k" })
+
+local TAB_PAD = 8       -- matches StyleVar_FramePadding.x in THEME_VARS
+local TAB_UNDERLINE = 2
+
+-- The tab strip. tabs = { { id = "rename", label = "...", hint = "Cmd+..." } }
+-- Returns the id of the tab that is now active -- the clicked one, or the id
+-- that went in.
+--
+-- Two things are drawn rather than submitted, for the usual reason:
+--   * the shortcut hint. A tab item takes ONE label string, so it cannot carry
+--     two colours; the hint gets its width reserved with trailing blanks and is
+--     then painted into that gap in the muted colour. Blanks, so there is
+--     nothing to paint over -- the tab's own background keeps working, hovered
+--     and selected alike.
+--   * the blue underline. Dear ImGui 1.92 marks the selected tab with an
+--     OVERline (Col_TabSelectedOverline, on the top edge); the mockup has a
+--     line underneath, so that one is switched off and ours is drawn.
+function SB.tab_bar(ctx, tabs, active_id)
+  local new_active = active_id
+
+  if not reaper.ImGui_BeginTabBar or not tabs or #tabs == 0 then
+    return new_active
+  end
+
+  -- The caller can move the active tab behind ImGui's back: restored from
+  -- ExtState on the first frame, or asked for by another script. ImGui owns
+  -- the selection the rest of the time, so force it only when the two have
+  -- actually drifted apart -- forcing every frame would nail the strip to one
+  -- tab and swallow every click.
+  local force = tab_reported[ctx] ~= active_id
+
+  local colors = {
+    { "Tab", C.window_bg },
+    { "TabHovered", C.header_bg },
+    { "TabSelected", C.window_bg },
+    { "TabSelectedOverline", C.window_bg },
+  }
+
+  local pushed_colors = 0
+  for _, entry in ipairs(colors) do
+    local id = col_id(entry[1])
+    if id then
+      reaper.ImGui_PushStyleColor(ctx, id, entry[2])
+      pushed_colors = pushed_colors + 1
+    end
+  end
+
+  local overline_var = var_id("TabBarOverlineSize")
+  if overline_var then
+    reaper.ImGui_PushStyleVar(ctx, overline_var, 0)
+  end
+
+  local dl = reaper.ImGui_GetWindowDrawList(ctx)
+  local space_w = text_width(ctx, " ")
+  local hint_scale = SB.size.small / SB.size.body
+
+  if reaper.ImGui_BeginTabBar(ctx, "steelblue_workspace_tabs") then
+    for _, tab in ipairs(tabs) do
+      local label = tab.label
+      local hint = tab.hint
+      local hint_w = nil
+
+      if hint and hint ~= "" then
+        local measured = text_width(ctx, hint)
+        if measured and space_w and space_w > 0 then
+          hint_w = measured * hint_scale
+          label = label .. "  " .. string.rep(" ", math.ceil(measured / space_w))
+        else
+          -- No text measurement on this build: show the hint plainly rather
+          -- than losing it into a gap that cannot be placed.
+          label = label .. "  " .. hint
+          hint = nil
+        end
+      end
+
+      local is_active = tab.id == active_id
+      local text_col = col_id("Text")
+      if text_col then
+        reaper.ImGui_PushStyleColor(ctx, text_col, is_active and C.text or C.text_dim)
+      end
+
+      local flags = 0
+      if force and is_active and reaper.ImGui_TabItemFlags_SetSelected then
+        flags = reaper.ImGui_TabItemFlags_SetSelected()
+      end
+
+      local selected = reaper.ImGui_BeginTabItem(ctx, label, nil, flags)
+
+      -- Read the rect straight away: anything submitted inside the tab item
+      -- would become "the last item" instead.
+      local x1, y1, x2, y2
+      if reaper.ImGui_GetItemRectMin and reaper.ImGui_GetItemRectMax then
+        x1, y1 = reaper.ImGui_GetItemRectMin(ctx)
+        x2, y2 = reaper.ImGui_GetItemRectMax(ctx)
+      end
+
+      if selected then
+        new_active = tab.id
+        reaper.ImGui_EndTabItem(ctx)
+      end
+
+      if text_col then
+        reaper.ImGui_PopStyleColor(ctx, 1)
+      end
+
+      if dl and x1 and y1 and x2 and y2 then
+        if hint and hint_w then
+          SB.draw_text(ctx, dl, x2 - TAB_PAD - hint_w,
+            (y1 + y2 - SB.size.small) / 2, C.text_muted, hint, SB.size.small)
+        end
+
+        if selected then
+          reaper.ImGui_DrawList_AddRectFilled(dl, x1, y2 - TAB_UNDERLINE, x2, y2, C.blue)
+        end
+      end
+    end
+
+    -- Only a strip that actually ran has reported anything. Recording the id
+    -- when BeginTabBar said no would clear `force` without a single tab having
+    -- been drawn -- and the restored tab would never be applied.
+    tab_reported[ctx] = new_active
+    reaper.ImGui_EndTabBar(ctx)
+  end
+
+  if overline_var then
+    reaper.ImGui_PopStyleVar(ctx, 1)
+  end
+  if pushed_colors > 0 then
+    reaper.ImGui_PopStyleColor(ctx, pushed_colors)
+  end
+
+  return new_active
+end
+
 return SB
