@@ -17,6 +17,7 @@ local PLUGINS = {
   { file = "MIDI notes to project markers.lua", name = "MIDI notes to project markers" },
   { file = "Rename selected markers.lua",       name = "Rename selected markers" },
   { file = "CopyMarkers.lua",                   name = "Copy Markers" },
+  { file = "steelblue_workspace.lua",           name = "steelblue LD Tools" },
 }
 
 -- Shipped alongside the plugins; without them the plugins refuse to start.

@@ -4,7 +4,7 @@
 --   1. every reaper.* name the installer calls really exists in the REAPER
 --      binary (a typo here would only surface on a stranger's machine, halfway
 --      through their install)
---   2. the flow does the right things: registers all four, asks about
+--   2. the flow does the right things: registers every plugin, asks about
 --      shortcuts, reports honestly about missing extensions
 
 local PKG = ((arg[0]:match("(.*/)") or "./").."../")..""
@@ -158,13 +158,14 @@ local fails = 0
 local function check(ok) if not ok then fails = fails + 1 end end
 
 -- OK, both extensions there, yes to shortcuts
-check(run("happy path: 4 registered, 4 shortcut dialogs", {
-  imgui = true, js = true, answers = { 1, 6, 1, 1, 1, 1 },
+-- Five since v2a: the workspace is an action like the other four.
+check(run("happy path: 5 registered, 5 shortcut dialogs", {
+  imgui = true, js = true, answers = { 1, 6, 1, 1, 1, 1, 1 },
 }, function(log)
   local reg, dlg = count(log, "register"), count(log, "shortcut_dialog")
-  if reg ~= 4 then return false, "registered " .. reg .. ", expected 4" end
-  if dlg ~= 4 then return false, "opened " .. dlg .. " shortcut dialogs, expected 4" end
-  return true, "4 registered, 4 dialogs"
+  if reg ~= 5 then return false, "registered " .. reg .. ", expected 5" end
+  if dlg ~= 5 then return false, "opened " .. dlg .. " shortcut dialogs, expected 5" end
+  return true, "5 registered, 5 dialogs"
 end))
 
 -- the files must physically arrive, and the registration must point AT them
@@ -175,6 +176,7 @@ check(run("files land in REAPER's Scripts folder", {
   local want = {
     "Live BPM Analyzer.lua", "MIDI notes to project markers.lua",
     "Rename selected markers.lua", "CopyMarkers.lua",
+    "steelblue_workspace.lua",
     "steelblue_ui.lua", "steelblue_markers.lua",
     "steelblue_boot.lua", "steelblue_matools.lua",
   }
@@ -191,7 +193,7 @@ check(run("files land in REAPER's Scripts folder", {
       return false, "registered from outside the install dir: " .. e.path
     end
   end
-  return true, "8 files copied, actions point at the copies"
+  return true, "9 files copied, actions point at the copies"
 end))
 
 -- the last AddRemoveReaScript must commit
@@ -489,7 +491,7 @@ check(run_from_layout("disk-image layout: installer on top", function(root)
   os.execute(string.format('cp %q/*.lua %q/ 2>/dev/null', PKG:sub(1, -2), root .. "/steelblue Plugin Set"))
   os.execute(string.format('cp -R %q %q/ 2>/dev/null', PKG .. "extensions", root .. "/steelblue Plugin Set"))
 end, function(log)
-  if count(log, "register") ~= 4 then
+  if count(log, "register") ~= 5 then
     return false, "found nothing: registered " .. count(log, "register")
   end
   return true, "found the payload one folder down"
@@ -499,7 +501,7 @@ check(run_from_layout("copied-folder layout: all in one place", function(root)
   os.execute(string.format('cp %q/*.lua %q/ 2>/dev/null', PKG:sub(1, -2), root))
   os.execute(string.format('cp -R %q %q/ 2>/dev/null', PKG .. "extensions", root))
 end, function(log)
-  return count(log, "register") == 4, "found the payload next to itself"
+  return count(log, "register") == 5, "found the payload next to itself"
 end))
 
 check(run_from_layout("installer dragged out on its own", function(root)

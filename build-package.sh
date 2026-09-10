@@ -41,6 +41,7 @@ stage_payload() {
   cp "$REPO/MIDI notes to project markers.lua"  "$inner/"
   cp "$REPO/Rename selected markers.lua"        "$inner/"
   cp "$REPO/CopyMarkers.lua"                    "$inner/"
+  cp "$REPO/steelblue_workspace.lua"            "$inner/"
 
   cp -R "$REPO/Tutorials" "$inner/Tutorials"
   rm -rf "$inner/Tutorials/pdf"            # the HTML guides are the on-screen ones
