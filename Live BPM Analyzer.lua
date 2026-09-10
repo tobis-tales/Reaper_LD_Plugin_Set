@@ -63,6 +63,10 @@ local status = "Select the finished song item and press play."
 local octave_note = nil
 local history = {}
 local max_history = 9
+-- Cost of the last live pass, in milliseconds, per stage. The live loop runs
+-- analyze_now() in the UI thread, so this is the number that decides whether
+-- the playback cursor moves smoothly. Shown in the footer.
+local last_analysis_ms = nil
 
 local function get_selected_audio_take()
   local item = reaper.GetSelectedMediaItem(0, 0)
@@ -670,6 +674,16 @@ local function format_octave_note(octave_bpm, octave_share)
   )
 end
 
+-- The footer says what the plugin is doing; in live mode it also says what one
+-- pass cost, because that is the number a stuttering cursor is complaining about.
+local function status_line()
+  if not last_analysis_ms then
+    return status
+  end
+
+  return status .. string.format(" - analysis %.1f ms", last_analysis_ms.total)
+end
+
 local function analyze_now()
   local item, take, err = get_selected_audio_take()
   if err then
@@ -677,11 +691,15 @@ local function analyze_now()
     return
   end
 
+  local started = reaper.time_precise()
+
   local buffer, sample_count, channel_count, read_err = read_analysis_window(item, take)
   if read_err then
     status = read_err
     return
   end
+
+  local after_read = reaper.time_precise()
 
   local onsets = build_onset_envelope(buffer, sample_count, channel_count)
   if not onsets then
@@ -689,11 +707,21 @@ local function analyze_now()
     return
   end
 
+  local after_envelope = reaper.time_precise()
+
   local estimated_bpm, detected_confidence, octave_bpm, octave_share = estimate_bpm(onsets)
   if not estimated_bpm then
     status = "No stable BPM candidate found."
     return
   end
+
+  local after_estimate = reaper.time_precise()
+  last_analysis_ms = {
+    read = (after_read - started) * 1000,
+    envelope = (after_envelope - after_read) * 1000,
+    estimate = (after_estimate - after_envelope) * 1000,
+    total = (after_estimate - started) * 1000,
+  }
 
   raw_bpm = estimated_bpm
   current_bpm = push_history(estimated_bpm)
@@ -970,7 +998,7 @@ local function loop()
       reaper.ImGui_TextWrapped(ctx, octave_note)
     end
 
-    SB.footer(ctx, status)
+    SB.footer(ctx, status_line())
   end
 
   SB.end_window(ctx, visible, font)
