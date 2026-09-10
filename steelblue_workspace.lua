@@ -3,8 +3,9 @@
 -- next to the Mixer: a brand band with the live BPM read-out and what is
 -- selected in the Region/Marker Manager, a row of tabs, and a status line.
 --
--- This is the SHELL. The tabs are empty on purpose -- Rename, MIDI and Copy
--- move in one at a time in the steps after this one. The four single-script
+-- The tabs move in one at a time. "Rename selected markers" is here: the same
+-- steelblue_rename.lua panel its own script draws, laid out wide instead of
+-- stacked. MIDI and Copy follow in the next step. The four single-script
 -- plugins keep working exactly as they do today; nothing here replaces them.
 
 local SCRIPT_TITLE = "steelblue LD Tools"
@@ -33,6 +34,25 @@ local MARKERS = load_module("steelblue_markers.lua")
 if not MARKERS then
   return
 end
+
+local MA = load_module("steelblue_matools.lua")
+if not MA then
+  return
+end
+
+local RENAME = load_module("steelblue_rename.lua")
+if not RENAME then
+  return
+end
+
+-- One panel for the whole run, so a half-typed cue name survives a trip to
+-- another tab. The plugin's own title, not the workspace's: it is what the
+-- fallback dialog and the message boxes say, and they belong to Rename.
+local panel_rename = RENAME.create({
+  MARKERS = MARKERS,
+  MA = MA,
+  title = "Rename selected markers",
+})
 
 -- ---------------------------------------------------------------- persistence
 
@@ -326,6 +346,11 @@ local function run_gui(SB)
   -- reserves, which is exactly the window's bottom padding.
   local FOOTER_HEIGHT = 2 + 7 + 26 + 7
 
+  -- Below this the reference lines are dropped and only the fields stay. Tobi's
+  -- docker goes from about 290 px to about 850; the fields alone fit at the
+  -- bottom of that range, the legend needs the room a taller docker gives.
+  local REFERENCE_MIN_HEIGHT = 450
+
   local function loop()
     local requested = read_open_tab_request()
     if requested then
@@ -364,7 +389,17 @@ local function run_gui(SB)
       set_active_tab(SB.tab_bar(ctx, TABS, state.active_tab))
 
       local tab = tab_by_id(state.active_tab) or TABS[1]
-      SB.label(ctx, tab.plugin .. " moves in here in the next step.")
+      if tab.id == "rename" then
+        local _, window_h = reaper.ImGui_GetWindowSize(ctx)
+        panel_rename.frame(ctx, SB, {
+          wide = true,
+          -- the header band already says how many markers are selected
+          show_selection = false,
+          show_reference = type(window_h) == "number" and window_h >= REFERENCE_MIN_HEIGHT,
+        })
+      else
+        SB.label(ctx, tab.plugin .. " moves in here in the next step.")
+      end
 
       -- Push the status line to the bottom edge: the docker owns the height,
       -- so "after the content" is nowhere near the bottom here.
@@ -373,10 +408,20 @@ local function run_gui(SB)
         reaper.ImGui_Dummy(ctx, 1, avail_h - FOOTER_HEIGHT)
       end
 
-      SB.footer(ctx, status, status_kind)
+      -- Every tab writes into the one status line at the bottom, so the panel
+      -- that is open says what happened and the others stay quiet.
+      local text, kind = status, status_kind
+      if state.active_tab == "rename" then
+        text, kind = panel_rename.status()
+      end
+
+      SB.footer(ctx, text, kind)
     end
 
     SB.end_window(ctx, visible, font)
+
+    -- outside the frame: safe to touch the project
+    panel_rename.after_frame()
 
     first_frame = false
 

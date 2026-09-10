@@ -82,6 +82,11 @@ local function make_reaper()
           if key == "ImGui_End" then state.windows = state.windows - 1 end
           if key == "ImGui_PushItemWidth" then state.widths = state.widths + 1 end
           if key == "ImGui_PopItemWidth" then state.widths = state.widths - 1 end
+          -- A tab item is a Begin/End pair like a window, and it leaks the same
+          -- way. Only an item that was ACCEPTED goes on the stack -- EndTabItem
+          -- belongs in the "true" branch, exactly as ImGui_End does for a
+          -- collapsed window -- so the increment sits with the return value.
+          if key == "ImGui_EndTabItem" then state.tabs = state.tabs - 1 end
 
           if key == "ImGui_CreateContext" then return "ctx" end
           if key == "ImGui_CreateFont" then return "font" end
@@ -89,6 +94,12 @@ local function make_reaper()
           if key == "ImGui_Begin" then return true, true end
           if key == "ImGui_GetCursorScreenPos" then return 100, 100 end
           if key == "ImGui_GetContentRegionAvail" then return 400, 300 end
+          -- A docker that is short for the first half of the run and tall for
+          -- the second, so one pass renders the workspace both with and without
+          -- the reference lines.
+          if key == "ImGui_GetWindowSize" then
+            return 1512, state.frame >= 15 and 500 or 400
+          end
           if key == "ImGui_GetCursorPos" then return 12, 12 end
           if key == "ImGui_GetCursorPosX" then return 12 end
           if key == "ImGui_GetCursorPosY" then return 12 end
@@ -109,7 +120,11 @@ local function make_reaper()
           if key == "ImGui_BeginTabBar" then state.tab_items = 0 return true end
           if key == "ImGui_BeginTabItem" then
             state.tab_items = state.tab_items + 1
-            return state.tab_items == 1
+            if state.tab_items ~= 1 then
+              return false
+            end
+            state.tabs = state.tabs + 1
+            return true
           end
           if key == "ImGui_Button" then return false end
           if key == "ImGui_Checkbox" then return false, a end
@@ -144,7 +159,7 @@ print("rendering each script for 30 frames against a fake REAPER:\n")
 
 for _, name in ipairs(plugins) do
   state = { frame = 0, colors = 0, vars = 0, fonts = 0, windows = 0, widths = 0,
-            tab_items = 0, missing = {}, messages = {} }
+            tabs = 0, tab_items = 0, missing = {}, messages = {} }
 
   local get_deferred
   reaper, get_deferred = make_reaper()
@@ -169,7 +184,7 @@ for _, name in ipairs(plugins) do
   local problems = {}
   if not ok then problems[#problems + 1] = "ERROR: " .. tostring(err) end
   for k in pairs(state.missing) do problems[#problems + 1] = "missing API " .. k end
-  for _, key in ipairs({ "colors", "vars", "fonts", "windows", "widths" }) do
+  for _, key in ipairs({ "colors", "vars", "fonts", "windows", "widths", "tabs" }) do
     if state[key] ~= 0 then
       problems[#problems + 1] = string.format("%s stack %+d", key, state[key])
     end
