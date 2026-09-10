@@ -115,6 +115,26 @@ local comb_ms = timed(function()
   return best
 end)
 
+-- What the live loop actually does per update once the window is rolling: turn
+-- one UPDATE_INTERVAL of new audio into frame energies, then run the cheap
+-- passes over the whole rolling buffer.
+local chunk_samples = math.floor(0.75 * SR) + T.frame_size
+local chunk = {}
+for i = 1, chunk_samples do chunk[i] = buf[i] end
+
+local chunk_ms = timed(function()
+  local out = {}
+  T.energies_for_samples(chunk, chunk_samples, 1, out)
+  return out
+end)
+
+local rolling = {}
+T.energies_for_samples(buf, n, 1, rolling)
+
+local passes_ms = timed(function()
+  return T.envelope_from_energies(rolling)
+end)
+
 local estimate_ms, estimated = timed(function()
   return T.estimate_bpm(onsets)
 end)
@@ -125,11 +145,14 @@ local refine_ms = estimate_ms - decimate_ms - comb_ms
 
 print(string.format("%-26s %10s", "stage", "median ms"))
 print(string.format("%-26s %10.1f", "build_onset_envelope", envelope_ms))
+print(string.format("%-26s %10.1f", "  energies, 0.75 s chunk", chunk_ms))
+print(string.format("%-26s %10.1f", "  envelope_from_energies", passes_ms))
 print(string.format("%-26s %10.1f", "decimate_envelope", decimate_ms))
 print(string.format("%-26s %10.1f", "comb sweep (60-200)", comb_ms))
 print(string.format("%-26s %10.1f", "refine + confidence", refine_ms))
 print(string.format("%-26s %10.1f", "estimate_bpm (total)", estimate_ms))
 print(string.rep("-", 37))
-print(string.format("%-26s %10.1f", "one analyze pass", envelope_ms + estimate_ms))
+print(string.format("%-26s %10.1f", "batch pass (button)", envelope_ms + estimate_ms))
+print(string.format("%-26s %10.1f", "live update, envelope only", chunk_ms + passes_ms))
 print(string.format("\nframes: %d   estimated: %.3f BPM", #onsets, estimated or 0))
 print(string.format("live loop budget is one defer frame; the loop calls this every %.2f s", 0.75))

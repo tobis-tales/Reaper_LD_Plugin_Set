@@ -198,14 +198,28 @@ local function get_sample(buffer, sample_index, channel_count)
   return sum / channel_count
 end
 
-local function build_onset_envelope(buffer, sample_count, channel_count)
+-- How many frames a span of that many seconds produces. The live buffer is
+-- trimmed with this so a rolling 24 s window holds exactly as many frames as
+-- one batch read of 24 s did.
+local function frames_for_seconds(seconds)
+  return math.floor(((seconds * SAMPLE_RATE) - FRAME_SIZE) / HOP_SIZE) + 1
+end
+
+-- Frame energies (RMS over FRAME_SIZE samples, one value every HOP_SIZE),
+-- appended to `out`. Returns how many frames were appended.
+--
+-- This is the expensive half of the envelope -- one Lua operation per sample --
+-- and it is split out so the live loop can run it on the newest audio only.
+-- The frame grid therefore has to continue across chunk boundaries: a chunk
+-- must start at the first sample of the next frame, not at the end of the last
+-- chunk, which leaves up to FRAME_SIZE samples of overlap between the two.
+local function energies_for_samples(buffer, sample_count, channel_count, out)
   local frame_count = math.floor((sample_count - FRAME_SIZE) / HOP_SIZE) + 1
-  if frame_count < 8 then
-    return nil
+  if frame_count < 1 then
+    return 0
   end
 
-  local energies = {}
-  local energy_sum = 0
+  local first = #out
 
   for frame = 1, frame_count do
     local first_sample = ((frame - 1) * HOP_SIZE) + 1
@@ -216,9 +230,41 @@ local function build_onset_envelope(buffer, sample_count, channel_count)
       energy = energy + sample_value * sample_value
     end
 
-    energy = math.sqrt(energy / FRAME_SIZE)
-    energies[frame] = energy
-    energy_sum = energy_sum + energy
+    out[first + frame] = math.sqrt(energy / FRAME_SIZE)
+  end
+
+  return frame_count
+end
+
+-- Keep only the newest `max_frames` energies. Shared by the live reader and its
+-- test so both trim the same way.
+local function trim_energies(energies, max_frames)
+  local excess = #energies - max_frames
+
+  if excess <= 0 then
+    return energies
+  end
+
+  local kept = {}
+  for index = excess + 1, #energies do
+    kept[index - excess] = energies[index]
+  end
+
+  return kept
+end
+
+-- The cheap half: onset deltas, adaptive threshold, sqrt. It walks frames
+-- (~2000 for a 24 s window), not samples, so the live loop can afford to run it
+-- over the whole rolling buffer on every update.
+local function envelope_from_energies(energies)
+  local frame_count = #energies
+  if frame_count < 8 then
+    return nil
+  end
+
+  local energy_sum = 0
+  for frame = 1, frame_count do
+    energy_sum = energy_sum + energies[frame]
   end
 
   local mean_energy = energy_sum / frame_count
@@ -269,6 +315,14 @@ local function build_onset_envelope(buffer, sample_count, channel_count)
   end
 
   return onsets
+end
+
+-- Batch envelope over one contiguous buffer: what "Analyze now" and the
+-- precision pass use, and what the accuracy suites measure.
+local function build_onset_envelope(buffer, sample_count, channel_count)
+  local energies = {}
+  energies_for_samples(buffer, sample_count, channel_count, energies)
+  return envelope_from_energies(energies)
 end
 
 local function interpolated_value(values, position)
@@ -584,10 +638,72 @@ local function estimate_bpm(onsets)
   return final_bpm, detected_confidence, octave_bpm, octave_share
 end
 
+-- One audio accessor per take, kept alive and reused.
+--
+-- Creating and destroying one per update -- and pulling the whole window
+-- through it every time -- is what made a live pass cost ~100 ms of UI-thread
+-- time four times a second. The rolling state next to it is the live window:
+-- frame energies for the last `window_seconds`, extended by the newest audio on
+-- every update instead of rebuilt.
+local reader = {
+  take = nil,
+  accessor = nil,
+  channel_count = 2,
+  energies = {},
+  next_frame_start = 0,   -- sample index into the take of the next frame to emit
+  last_end_sample = nil,  -- where the previous update stopped reading
+  playing = nil,
+}
+
+local function release_accessor()
+  if reader.accessor then
+    reaper.DestroyAudioAccessor(reader.accessor)
+  end
+
+  reader.accessor = nil
+  reader.take = nil
+  reader.energies = {}
+  reader.last_end_sample = nil
+end
+
+-- Drop the rolling window and start collecting again at `start_sample`.
+--
+-- Deliberately at the cursor and not one window before it: back-filling the
+-- whole window is the expensive read this rewrite exists to avoid. The price is
+-- that after a jump the display needs MIN_ANALYSIS_SECONDS to say anything and
+-- `window_seconds` to be as accurate as a batch pass again.
+local function reset_window(start_sample)
+  reader.energies = {}
+  reader.next_frame_start = math.max(0, start_sample)
+end
+
+local function accessor_for(take)
+  if take ~= reader.take then
+    release_accessor()
+
+    local accessor = reaper.CreateTakeAudioAccessor(take)
+    if not accessor then
+      return nil, nil, "Could not create audio accessor."
+    end
+
+    local source = reaper.GetMediaItemTake_Source(take)
+    local channel_count = source and reaper.GetMediaSourceNumChannels(source) or 2
+
+    reader.take = take
+    reader.accessor = accessor
+    reader.channel_count = clamp(channel_count, 1, 2)
+    reader.energies = {}
+    reader.last_end_sample = nil
+  end
+
+  return reader.accessor, reader.channel_count, nil
+end
+
 local function read_samples(take, start_position, duration)
-  local source = reaper.GetMediaItemTake_Source(take)
-  local channel_count = source and reaper.GetMediaSourceNumChannels(source) or 2
-  channel_count = clamp(channel_count, 1, 2)
+  local accessor, channel_count, accessor_err = accessor_for(take)
+  if not accessor then
+    return nil, nil, nil, accessor_err
+  end
 
   local sample_count = math.floor(duration * SAMPLE_RATE)
   if sample_count <= FRAME_SIZE then
@@ -597,11 +713,6 @@ local function read_samples(take, start_position, duration)
   local buffer = reaper.new_array(sample_count * channel_count)
   buffer.clear()
 
-  local accessor = reaper.CreateTakeAudioAccessor(take)
-  if not accessor then
-    return nil, nil, nil, "Could not create audio accessor."
-  end
-
   local ok = reaper.GetAudioAccessorSamples(
     accessor,
     SAMPLE_RATE,
@@ -610,8 +721,6 @@ local function read_samples(take, start_position, duration)
     sample_count,
     buffer
   )
-
-  reaper.DestroyAudioAccessor(accessor)
 
   if ok ~= 1 then
     return nil, nil, nil, "Could not read audio samples."
@@ -638,6 +747,96 @@ local function read_analysis_window(item, take)
   end
 
   return read_samples(take, analysis_start - item_start, duration)
+end
+
+-- The live window, read incrementally.
+--
+-- Each update reads only the audio that is new since the last one, turns it
+-- into frame energies and appends them to the rolling buffer; the buffer is
+-- trimmed to `window_seconds` and the cheap envelope passes run over it. The
+-- chunk starts at the first sample of the next frame, which leaves up to
+-- FRAME_SIZE samples of overlap with the previous chunk -- without that overlap
+-- the frames straddling a chunk boundary would simply be missing.
+--
+-- The buffer is thrown away and refilled when the audio under the cursor stops
+-- being a continuation of what is already in it: another take, the cursor
+-- jumping (backwards, or further ahead than a normal update step), playback
+-- starting or stopping, or REAPER reporting that the take's samples changed
+-- under the accessor. Changing `window_seconds` needs no reset: a shorter
+-- window is trimmed out of the buffer, a longer one simply fills up.
+local function read_live_envelope(item, take)
+  local accessor, channel_count, accessor_err = accessor_for(take)
+  if not accessor then
+    return nil, accessor_err
+  end
+
+  local item_start = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+  local item_end = item_start + reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+  local playing = (reaper.GetPlayState() & 1) == 1
+  local play_pos = playing and reaper.GetPlayPosition() or reaper.GetCursorPosition()
+
+  local analysis_end = clamp(play_pos, item_start, item_end)
+  local end_sample = math.floor((analysis_end - item_start) * SAMPLE_RATE)
+  local max_frames = math.max(1, frames_for_seconds(window_seconds))
+
+  -- A live analysis step is UPDATE_INTERVAL of audio; twice that is the slack
+  -- for a late defer frame. Anything beyond it is a jump, not scheduling jitter.
+  local step_limit = math.floor(UPDATE_INTERVAL * 2 * SAMPLE_RATE)
+  local stale = reaper.AudioAccessorValidateState
+    and reaper.AudioAccessorValidateState(accessor)
+
+  if stale and reaper.AudioAccessorUpdate then
+    reaper.AudioAccessorUpdate(accessor)
+  end
+
+  local continues = reader.last_end_sample
+    and not stale
+    and playing == reader.playing
+    and end_sample >= reader.last_end_sample
+    and (end_sample - reader.last_end_sample) <= step_limit
+
+  if not continues then
+    reset_window(end_sample)
+  end
+
+  reader.last_end_sample = end_sample
+  reader.playing = playing
+
+  local available = end_sample - reader.next_frame_start
+
+  if available >= FRAME_SIZE then
+    local buffer = reaper.new_array(available * channel_count)
+    buffer.clear()
+
+    local ok = reaper.GetAudioAccessorSamples(
+      accessor,
+      SAMPLE_RATE,
+      channel_count,
+      reader.next_frame_start / SAMPLE_RATE,
+      available,
+      buffer
+    )
+
+    if ok ~= 1 then
+      return nil, "Could not read audio samples."
+    end
+
+    local frames = energies_for_samples(buffer, available, channel_count, reader.energies)
+    reader.next_frame_start = reader.next_frame_start + (frames * HOP_SIZE)
+  end
+
+  reader.energies = trim_energies(reader.energies, max_frames)
+
+  if #reader.energies < frames_for_seconds(MIN_ANALYSIS_SECONDS) then
+    return nil, "Need at least " .. tostring(MIN_ANALYSIS_SECONDS) .. " seconds of audio before the cursor."
+  end
+
+  local onsets = envelope_from_energies(reader.energies)
+  if not onsets then
+    return nil, "Could not find enough rhythmic transients."
+  end
+
+  return onsets, nil
 end
 
 local function read_precision_window(item, take)
@@ -684,6 +883,29 @@ local function status_line()
   return status .. string.format(" - analysis %.1f ms", last_analysis_ms.total)
 end
 
+-- Everything a finished estimate does to the displayed state. Shared by the
+-- button and the live loop so the two cannot drift apart.
+local function apply_estimate(estimated_bpm, detected_confidence, octave_bpm, octave_share)
+  raw_bpm = estimated_bpm
+  current_bpm = push_history(estimated_bpm)
+  raw_confidence = detected_confidence
+  octave_note = format_octave_note(octave_bpm, octave_share)
+
+  if #history >= 3 then
+    local history_mean = mean(history)
+    local history_std = standard_deviation(history, history_mean)
+    local stability = clamp(1 - (history_std / 2), 0, 1)
+    confidence = clamp((detected_confidence * 0.65) + (stability * 0.35), 0, 1)
+  else
+    confidence = detected_confidence
+  end
+
+  status = "Analyzing selected item while playback runs."
+end
+
+-- The "Analyze now" button: one batch pass over the whole window, answer on the
+-- same frame. It is allowed to be expensive -- the user asked for it once, and
+-- a single stutter on a click is not a stuttering cursor.
 local function analyze_now()
   local item, take, err = get_selected_audio_take()
   if err then
@@ -723,21 +945,43 @@ local function analyze_now()
     total = (after_estimate - started) * 1000,
   }
 
-  raw_bpm = estimated_bpm
-  current_bpm = push_history(estimated_bpm)
-  raw_confidence = detected_confidence
-  octave_note = format_octave_note(octave_bpm, octave_share)
+  apply_estimate(estimated_bpm, detected_confidence, octave_bpm, octave_share)
+end
 
-  if #history >= 3 then
-    local history_mean = mean(history)
-    local history_std = standard_deviation(history, history_mean)
-    local stability = clamp(1 - (history_std / 2), 0, 1)
-    confidence = clamp((detected_confidence * 0.65) + (stability * 0.35), 0, 1)
-  else
-    confidence = detected_confidence
+-- The live path, called from the defer loop. Reads only the newest audio and
+-- runs the cheap envelope passes over the rolling window.
+local function analyze_live()
+  local item, take, err = get_selected_audio_take()
+  if err then
+    status = err
+    return
   end
 
-  status = "Analyzing selected item while playback runs."
+  local started = reaper.time_precise()
+
+  local onsets, read_err = read_live_envelope(item, take)
+  if read_err then
+    status = read_err
+    return
+  end
+
+  local after_envelope = reaper.time_precise()
+
+  local estimated_bpm, detected_confidence, octave_bpm, octave_share = estimate_bpm(onsets)
+  if not estimated_bpm then
+    status = "No stable BPM candidate found."
+    return
+  end
+
+  local after_estimate = reaper.time_precise()
+  last_analysis_ms = {
+    read = 0,
+    envelope = (after_envelope - started) * 1000,
+    estimate = (after_estimate - after_envelope) * 1000,
+    total = (after_estimate - started) * 1000,
+  }
+
+  apply_estimate(estimated_bpm, detected_confidence, octave_bpm, octave_share)
 end
 
 local function precision_analyze()
@@ -893,6 +1137,16 @@ if TEST_HOOK then
   TEST_HOOK.sample_rate = SAMPLE_RATE
   TEST_HOOK.hop_size = HOP_SIZE
   TEST_HOOK.build_onset_envelope = build_onset_envelope
+  TEST_HOOK.energies_for_samples = energies_for_samples
+  TEST_HOOK.envelope_from_energies = envelope_from_energies
+  TEST_HOOK.trim_energies = trim_energies
+  TEST_HOOK.frames_for_seconds = frames_for_seconds
+  TEST_HOOK.read_live_envelope = read_live_envelope
+  TEST_HOOK.release_accessor = release_accessor
+  TEST_HOOK.reader = reader
+  TEST_HOOK.frame_size = FRAME_SIZE
+  TEST_HOOK.update_interval = UPDATE_INTERVAL
+  TEST_HOOK.set_window_seconds = function(seconds) window_seconds = seconds end
   TEST_HOOK.estimate_bpm = estimate_bpm
   TEST_HOOK.comb_score = comb_score
   TEST_HOOK.tempo_prior = tempo_prior
@@ -917,7 +1171,7 @@ local function loop()
   local now = reaper.time_precise()
   if live_update and now - last_update >= UPDATE_INTERVAL then
     last_update = now
-    analyze_now()
+    analyze_live()
   end
 
   local visible, open, font = SB.begin_window(ctx, SCRIPT_TITLE, 420)
@@ -1006,6 +1260,7 @@ local function loop()
   if open then
     reaper.defer(loop)
   else
+    release_accessor()
     BOOT.destroy_context(ctx)
   end
 end
