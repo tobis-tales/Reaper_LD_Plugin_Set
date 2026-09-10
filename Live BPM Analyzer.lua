@@ -30,6 +30,9 @@ local SAMPLE_RATE = 11025
 local FRAME_SIZE = 512
 local HOP_SIZE = 128
 local UPDATE_INTERVAL = 0.75
+-- How much of a defer frame the live tempo search may take. A frame at 60 Hz is
+-- ~16 ms; anything much above this and the playback cursor starts to stutter.
+local LIVE_STEP_BUDGET = 0.004
 local MIN_ANALYSIS_SECONDS = 4
 local PRECISION_MAX_SECONDS = 120
 local PRECISION_MIN_SECONDS = 12
@@ -67,6 +70,10 @@ local max_history = 9
 -- analyze_now() in the UI thread, so this is the number that decides whether
 -- the playback cursor moves smoothly. Shown in the footer.
 local last_analysis_ms = nil
+-- The live tempo search in progress, stepped a few milliseconds per frame.
+local pending_estimate = nil
+local pending_envelope_ms = 0
+local pending_estimate_ms = 0
 
 local function get_selected_audio_take()
   local item = reaper.GetSelectedMediaItem(0, 0)
@@ -557,85 +564,163 @@ local function decimate_envelope(onsets)
   return decimated
 end
 
-local function estimate_bpm(onsets)
+-- The tempo search, sliced so it fits in a defer frame.
+--
+-- The coarse comb sweep is 281 candidates x 3 harmonics over the decimated
+-- envelope: ~18 ms for a 24 s window, ~47 ms for a 60 s one. Run in one go from
+-- the UI thread that is a visible hitch in the playback cursor, so the live
+-- loop asks for a few milliseconds of it per frame instead.
+--
+-- `step(budget_seconds)` returns true once the result is on the estimator. It
+-- is the same arithmetic in the same order as the straight loop was -- only the
+-- wall clock between start and finish changes, never the number that comes out.
+-- The final stage (rival, octave hint, long-lag refinement, confidence) is one
+-- indivisible step of 2-5 ms; splitting it would mean rewriting refine_period,
+-- and that is the accuracy guardrail.
+local function start_estimate(onsets)
   local frame_rate = SAMPLE_RATE / HOP_SIZE
   local coarse_envelope = decimate_envelope(onsets)
   local coarse_rate = frame_rate / 2
 
   if #coarse_envelope < 16 then
-    return nil, 0
+    return nil
   end
+
+  local estimator = {
+    done = false,
+    bpm = nil,
+    confidence = 0,
+    octave_bpm = nil,
+    octave_share = 0,
+    steps = 0,
+  }
+
+  -- The scored grid, exposed so a test can check that the sweep really covered
+  -- it. Comparing the stepper against estimate_bpm cannot: estimate_bpm runs
+  -- the same stepper, so a sweep that skipped half the grid would agree with
+  -- itself and read green.
+  estimator.candidates = {}
 
   local coarse_min = math.min(bpm_min, bpm_max)
   local coarse_max = math.max(bpm_min, bpm_max)
 
-  local candidates = {}
+  local candidates = estimator.candidates
   local best_bpm = nil
   local best_score = 0
-
   local bpm = coarse_min
-  while bpm <= coarse_max do
-    local score = comb_score(coarse_envelope, coarse_rate, bpm) * tempo_prior(bpm)
-    candidates[#candidates + 1] = { bpm = bpm, score = score }
+  local sweeping = true
 
-    if score > best_score then
-      best_score = score
-      best_bpm = bpm
+  local function finish()
+    if not best_bpm then
+      return
     end
 
-    bpm = bpm + 0.5
-  end
+    -- candidates stay in BPM order: pick_rival needs neighbours to spot local maxima
+    local _, rival_score = pick_rival(candidates, best_bpm)
+    local octave_bpm, octave_share = pick_octave_hint(candidates, best_bpm, best_score)
 
-  if not best_bpm then
-    return nil, 0
-  end
+    local dominance = 1
+    if best_score > 0 and rival_score > 0 then
+      dominance = clamp((best_score - rival_score) / best_score, 0, 1)
+    end
 
-  -- candidates stay in BPM order: pick_rival needs neighbours to spot local maxima
-  local _, rival_score = pick_rival(candidates, best_bpm)
-  local octave_bpm, octave_share = pick_octave_hint(candidates, best_bpm, best_score)
+    -- Two-stage lag refinement on the full-resolution envelope: a short span
+    -- first (kills the coarse-grid error safely), then the longest span that
+    -- still leaves enough overlap for a stable correlation.
+    local period = (60 / best_bpm) * frame_rate
+    local refine_quality = 0
+    local max_beats = math.floor((#onsets * 0.7) / period)
+    local stage_one_beats = math.min(8, max_beats)
 
-  local dominance = 1
-  if best_score > 0 and rival_score > 0 then
-    dominance = clamp((best_score - rival_score) / best_score, 0, 1)
-  end
+    if stage_one_beats >= 2 then
+      local refined, peak = refine_period(onsets, period, stage_one_beats)
 
-  -- Two-stage lag refinement on the full-resolution envelope: a short span
-  -- first (kills the coarse-grid error safely), then the longest span that
-  -- still leaves enough overlap for a stable correlation.
-  local period = (60 / best_bpm) * frame_rate
-  local refine_quality = 0
-  local max_beats = math.floor((#onsets * 0.7) / period)
-  local stage_one_beats = math.min(8, max_beats)
+      if refined and peak > 0.1 then
+        period = refined
+        refine_quality = peak
 
-  if stage_one_beats >= 2 then
-    local refined, peak = refine_period(onsets, period, stage_one_beats)
+        local stage_two_beats = math.floor((#onsets * 0.7) / period)
+        if stage_two_beats > stage_one_beats + 2 then
+          local refined_two, peak_two = refine_period(onsets, period, stage_two_beats)
 
-    if refined and peak > 0.1 then
-      period = refined
-      refine_quality = peak
-
-      local stage_two_beats = math.floor((#onsets * 0.7) / period)
-      if stage_two_beats > stage_one_beats + 2 then
-        local refined_two, peak_two = refine_period(onsets, period, stage_two_beats)
-
-        if refined_two and peak_two > 0.1 then
-          period = refined_two
-          refine_quality = math.max(refine_quality, peak_two)
+          if refined_two and peak_two > 0.1 then
+            period = refined_two
+            refine_quality = math.max(refine_quality, peak_two)
+          end
         end
       end
     end
+
+    estimator.bpm = 60 * frame_rate / period
+
+    local absolute_score = clamp((best_score - COMB_SCORE_FLOOR) / COMB_SCORE_SPAN, 0, 1)
+    local refine_score = clamp((refine_quality - REFINE_QUALITY_FLOOR) / REFINE_QUALITY_SPAN, 0, 1)
+    estimator.confidence = clamp(
+      (dominance * 0.5) + (absolute_score * 0.25) + (refine_score * 0.25),
+      0,
+      1
+    )
+    estimator.octave_bpm = octave_bpm
+    estimator.octave_share = octave_share
   end
 
-  local final_bpm = 60 * frame_rate / period
-  local absolute_score = clamp((best_score - COMB_SCORE_FLOOR) / COMB_SCORE_SPAN, 0, 1)
-  local refine_score = clamp((refine_quality - REFINE_QUALITY_FLOOR) / REFINE_QUALITY_SPAN, 0, 1)
-  local detected_confidence = clamp(
-    (dominance * 0.5) + (absolute_score * 0.25) + (refine_score * 0.25),
-    0,
-    1
-  )
+  estimator.step = function(budget_seconds)
+    if estimator.done then
+      return true
+    end
 
-  return final_bpm, detected_confidence, octave_bpm, octave_share
+    estimator.steps = estimator.steps + 1
+    local deadline = os.clock() + (budget_seconds or 0)
+
+    if sweeping then
+      while bpm <= coarse_max do
+        local score = comb_score(coarse_envelope, coarse_rate, bpm) * tempo_prior(bpm)
+        candidates[#candidates + 1] = { bpm = bpm, score = score }
+
+        if score > best_score then
+          best_score = score
+          best_bpm = bpm
+        end
+
+        bpm = bpm + 0.5
+
+        if os.clock() >= deadline then
+          return false
+        end
+      end
+
+      sweeping = false
+
+      -- the last stage is 2-5 ms in one piece; start it on a fresh budget
+      if os.clock() >= deadline then
+        return false
+      end
+    end
+
+    finish()
+    estimator.done = true
+    return true
+  end
+
+  return estimator
+end
+
+-- The synchronous estimator: runs the stepper to the end in one call. This is
+-- what "Analyze now", the precision pass and the three accuracy suites use, and
+-- its numbers must not move.
+local function estimate_bpm(onsets)
+  local estimator = start_estimate(onsets)
+  if not estimator then
+    return nil, 0
+  end
+
+  while not estimator.step(math.huge) do end
+
+  if not estimator.bpm then
+    return nil, 0
+  end
+
+  return estimator.bpm, estimator.confidence, estimator.octave_bpm, estimator.octave_share
 end
 
 -- One audio accessor per take, kept alive and reused.
@@ -945,11 +1030,14 @@ local function analyze_now()
     total = (after_estimate - started) * 1000,
   }
 
+  pending_estimate = nil
   apply_estimate(estimated_bpm, detected_confidence, octave_bpm, octave_share)
 end
 
--- The live path, called from the defer loop. Reads only the newest audio and
--- runs the cheap envelope passes over the rolling window.
+-- The live path, called from the defer loop once per UPDATE_INTERVAL. Reads
+-- only the newest audio, runs the cheap envelope passes over the rolling
+-- window, and hands the tempo search to the stepper -- which the frames after
+-- this one work off a few milliseconds at a time.
 local function analyze_live()
   local item, take, err = get_selected_audio_take()
   if err then
@@ -965,23 +1053,46 @@ local function analyze_live()
     return
   end
 
-  local after_envelope = reaper.time_precise()
+  pending_envelope_ms = (reaper.time_precise() - started) * 1000
+  pending_estimate_ms = 0
+  pending_estimate = start_estimate(onsets)
 
-  local estimated_bpm, detected_confidence, octave_bpm, octave_share = estimate_bpm(onsets)
-  if not estimated_bpm then
+  if not pending_estimate then
+    status = "No stable BPM candidate found."
+  end
+end
+
+-- One slice of the live tempo search. Runs on every defer frame; the result is
+-- only shown once the search is finished, never as an intermediate value.
+local function step_live_estimate()
+  if not pending_estimate then
+    return
+  end
+
+  local started = reaper.time_precise()
+  local finished = pending_estimate.step(LIVE_STEP_BUDGET)
+  pending_estimate_ms = pending_estimate_ms + ((reaper.time_precise() - started) * 1000)
+
+  if not finished then
+    return
+  end
+
+  local estimator = pending_estimate
+  pending_estimate = nil
+
+  if not estimator.bpm then
     status = "No stable BPM candidate found."
     return
   end
 
-  local after_estimate = reaper.time_precise()
   last_analysis_ms = {
     read = 0,
-    envelope = (after_envelope - started) * 1000,
-    estimate = (after_estimate - after_envelope) * 1000,
-    total = (after_estimate - started) * 1000,
+    envelope = pending_envelope_ms,
+    estimate = pending_estimate_ms,
+    total = pending_envelope_ms + pending_estimate_ms,
   }
 
-  apply_estimate(estimated_bpm, detected_confidence, octave_bpm, octave_share)
+  apply_estimate(estimator.bpm, estimator.confidence, estimator.octave_bpm, estimator.octave_share)
 end
 
 local function precision_analyze()
@@ -1016,6 +1127,7 @@ local function precision_analyze()
   confidence = detected_confidence
   octave_note = format_octave_note(octave_bpm, octave_share)
   live_update = false
+  pending_estimate = nil
 
   status = string.format(
     "Precision result from %.0f s of audio. Live updates paused so the value stays.",
@@ -1148,6 +1260,7 @@ if TEST_HOOK then
   TEST_HOOK.update_interval = UPDATE_INTERVAL
   TEST_HOOK.set_window_seconds = function(seconds) window_seconds = seconds end
   TEST_HOOK.estimate_bpm = estimate_bpm
+  TEST_HOOK.start_estimate = start_estimate
   TEST_HOOK.comb_score = comb_score
   TEST_HOOK.tempo_prior = tempo_prior
   TEST_HOOK.decimate_envelope = decimate_envelope
@@ -1169,9 +1282,18 @@ local ctx = reaper.ImGui_CreateContext(SCRIPT_TITLE)
 
 local function loop()
   local now = reaper.time_precise()
+  -- Never both in one frame: the envelope update and a search slice each cost
+  -- a few milliseconds, and together they are back over the frame budget.
+  local refreshed = false
+
   if live_update and now - last_update >= UPDATE_INTERVAL then
     last_update = now
     analyze_live()
+    refreshed = true
+  end
+
+  if live_update and not refreshed then
+    step_live_estimate()
   end
 
   local visible, open, font = SB.begin_window(ctx, SCRIPT_TITLE, 420)
@@ -1245,6 +1367,7 @@ local function loop()
       confidence = 0
       raw_confidence = 0
       octave_note = nil
+      pending_estimate = nil
     end
 
     if octave_note then

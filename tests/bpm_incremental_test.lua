@@ -253,6 +253,102 @@ do
     string.format("%d chunks, overlap %d..%d samples", #state.reads, smallest, largest))
 end
 
+-- (b) ----------------------------------------------- stepper == synchronous
+-- The sliced tempo search must return exactly what the straight loop returned.
+-- "Roughly the same BPM" is not good enough here: the whole point of the
+-- estimator is sub-0.01 BPM precision, and a stepper that resumes with slightly
+-- different state would lose that quietly.
+--
+-- 174 BPM is in the list because it reads as half time and carries an octave
+-- hint -- without it the octave comparison would be nil == nil and prove
+-- nothing.
+do
+  local slowest_overall = 0
+  local hints_seen = 0
+
+  for _, case_bpm in ipairs({ 128, 174 }) do
+    load_song(case_bpm, 24)
+
+    local sample_count = math.floor(24 * SR)
+    local buffer = slice(0, sample_count)
+    local onsets = T.build_onset_envelope(buffer, sample_count, 1)
+
+    local want_bpm, want_conf, want_octave, want_share = T.estimate_bpm(onsets)
+
+    local estimator = T.start_estimate(onsets)
+    local slices = {}
+    local guard = 0
+    local finished = false
+
+    repeat
+      local started = os.clock()
+      finished = estimator.step(0.004)
+      slices[#slices + 1] = (os.clock() - started) * 1000
+      guard = guard + 1
+    until finished or guard > 10000
+
+    local slowest = 0
+    for _, ms in ipairs(slices) do
+      if ms > slowest then slowest = ms end
+    end
+    if slowest > slowest_overall then slowest_overall = slowest end
+    if want_octave then hints_seen = hints_seen + 1 end
+
+    local label = string.format("(b) %.0f BPM: ", case_bpm)
+
+    check(label .. "same BPM, to the last bit",
+      want_bpm and estimator.bpm and (estimator.bpm - want_bpm) == 0,
+      string.format("sync %.6f, stepped %.6f", want_bpm or 0, estimator.bpm or 0))
+
+    check(label .. "same confidence",
+      ((estimator.confidence or 0) - (want_conf or 0)) == 0,
+      string.format("sync %.6f, stepped %.6f", want_conf or 0, estimator.confidence or 0))
+
+    check(label .. "same octave hint",
+      estimator.octave_bpm == want_octave
+        and ((estimator.octave_share or 0) - (want_share or 0)) == 0,
+      string.format("sync %s @ %.4f, stepped %s @ %.4f",
+        tostring(want_octave), want_share or 0,
+        tostring(estimator.octave_bpm), estimator.octave_share or 0))
+
+    check(label .. "the search really was sliced",
+      #slices > 1,
+      string.format("%d steps at a 4 ms budget", #slices))
+
+    -- Not a comparison against estimate_bpm: that runs the same stepper, so a
+    -- sweep that skipped half the grid would agree with itself. This anchors
+    -- the grid itself -- 60 to 200 BPM in 0.5 steps, every candidate scored.
+    local grid = estimator.candidates
+    local expected = ((200 - 60) / 0.5) + 1
+    local worst_gap = 0
+    for index = 2, #grid do
+      local gap = math.abs((grid[index].bpm - grid[index - 1].bpm) - 0.5)
+      if gap > worst_gap then worst_gap = gap end
+    end
+
+    check(label .. "the whole 0.5 BPM grid was scored",
+      #grid == expected
+        and grid[1] and grid[1].bpm == 60
+        and grid[#grid].bpm == 200
+        and worst_gap < 1e-9,
+      string.format("%d candidates (want %d), %s..%s", #grid, expected,
+        grid[1] and tostring(grid[1].bpm) or "-",
+        grid[#grid] and tostring(grid[#grid].bpm) or "-"))
+  end
+
+  check("(b) at least one case carried an octave hint",
+    hints_seen > 0,
+    string.format("%d of 2 cases", hints_seen))
+
+  -- Timing is reported, not judged, below 50 ms: a slow machine must not turn
+  -- the suite red over scheduling noise. Above that something is structurally
+  -- wrong -- a slice that long is a stutter wherever it runs.
+  check("(b) no slice ran away (< 50 ms)",
+    slowest_overall < 50,
+    string.format("slowest slice %.1f ms%s", slowest_overall,
+      slowest_overall < 20 and "" or "  -- over 20 ms, worth a look"))
+end
+
 -- (c) --------------------------------------------------------------- resets
 do
   load_song(128, 60)
