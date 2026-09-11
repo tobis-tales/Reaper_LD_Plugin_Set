@@ -290,5 +290,32 @@ do
   end
 end
 
+-- --------------------------------------------------------- the +/- arrows
+
+do
+  reaper = capture_footer(build_reaper())
+  local ok, err = pcall(dofile, folder .. "Rename selected markers.lua")
+  if not ok then
+    check(false, "d) the single script loads for the arrow test", tostring(err))
+  else
+    frame()
+
+    click_label = "+"
+    frame()
+    click_label = nil
+    frame()
+
+    click_label = "Rename selected markers"
+    frame()
+    click_label = nil
+    frame()
+
+    local renamed = marker(2).name
+    check(renamed == "verse(2)[Top]^verse^",
+      "d1) the + button bumps the cue number before renaming",
+      renamed)
+  end
+end
+
 print(fails == 0 and "\nALL PASS" or ("\nFAILURES: " .. fails))
 os.exit(fails == 0 and 0 or 1)

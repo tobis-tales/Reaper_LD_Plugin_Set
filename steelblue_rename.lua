@@ -133,6 +133,17 @@ local function format_cue_number(number)
   return tostring(number)
 end
 
+-- The +/- buttons next to the cue number field. Non-numeric text (including
+-- empty) resets to "1" regardless of direction, rather than stepping from it.
+local function step_cue_number(text, delta)
+  local number = tonumber(text)
+  if not number then
+    return "1"
+  end
+
+  return format_cue_number(math.max(1, number + delta))
+end
+
 -- The legend under the fields. One line per syntax element, aligned by the
 -- blanks in the strings themselves, which is why they are drawn as plain
 -- labels and not as a table.
@@ -546,7 +557,7 @@ function M.create(env)
   end
 
   -- The numbering row, identical in both layouts: it is already one line today.
-  local function draw_number_row(ctx)
+  local function draw_number_row(ctx, SB)
     local _
 
     _, state.use_cue_number = reaper.ImGui_Checkbox(ctx, "Cue number", state.use_cue_number)
@@ -554,6 +565,27 @@ function M.create(env)
     reaper.ImGui_SameLine(ctx)
     reaper.ImGui_SetNextItemWidth(ctx, 90)
     _, state.cue_number = reaper.ImGui_InputText(ctx, "##cue_number", state.cue_number)
+
+    local cue_number_greyed = not state.use_cue_number and can_disable()
+    if cue_number_greyed then
+      reaper.ImGui_BeginDisabled(ctx, true)
+    end
+
+    local cue_number_field_height = reaper.ImGui_GetFrameHeight(ctx)
+
+    reaper.ImGui_SameLine(ctx, 0, 2)
+    if SB.button(ctx, "-", 22, cue_number_field_height) then
+      state.cue_number = step_cue_number(state.cue_number, -1)
+    end
+
+    reaper.ImGui_SameLine(ctx, 0, 2)
+    if SB.button(ctx, "+", 22, cue_number_field_height) then
+      state.cue_number = step_cue_number(state.cue_number, 1)
+    end
+
+    if cue_number_greyed then
+      reaper.ImGui_EndDisabled(ctx)
+    end
 
     reaper.ImGui_SameLine(ctx)
     _, state.create_multiple_cues = reaper.ImGui_Checkbox(
@@ -620,7 +652,7 @@ function M.create(env)
     reaper.ImGui_SetNextItemWidth(ctx, 360)
     _, state.sequence_name = reaper.ImGui_InputText(ctx, "Sequence name", state.sequence_name)
 
-    draw_number_row(ctx)
+    draw_number_row(ctx, SB)
 
     local command_items, command_index, command_list = command_choices(state.command_name)
     reaper.ImGui_SetNextItemWidth(ctx, 120)
@@ -651,7 +683,7 @@ function M.create(env)
     reaper.ImGui_SetNextItemWidth(ctx, 360)
     _, state.sequence_name = reaper.ImGui_InputText(ctx, "Sequence name", state.sequence_name)
 
-    draw_number_row(ctx)
+    draw_number_row(ctx, SB)
 
     local command_items, command_index, command_list = command_choices(state.command_name)
     reaper.ImGui_SetNextItemWidth(ctx, 120)
@@ -796,6 +828,7 @@ function M.create(env)
       set_state = set_state,
       reset_to_defaults = reset_to_defaults,
       base_name = base_name,
+      step_cue_number = step_cue_number,
       build_marker_name = build_marker_name,
       prefill_from = prefill_from,
       prefill_from_selection = prefill_from_selection,
