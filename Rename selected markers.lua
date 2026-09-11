@@ -181,6 +181,17 @@ local function format_cue_number(number)
   return tostring(number)
 end
 
+-- The +/- buttons next to the cue number field. Non-numeric text (including
+-- empty) resets to "1" regardless of direction, rather than stepping from it.
+local function step_cue_number(text, delta)
+  local number = tonumber(text)
+  if not number then
+    return "1"
+  end
+
+  return format_cue_number(math.max(1, number + delta))
+end
+
 -- The wrap is deliberate: six markers with "how many cues" set to five are
 -- numbered 1 2 3 4 5 1.
 local function get_cue_number_for_marker(marker_offset)
@@ -550,6 +561,27 @@ local function run_gui(SB)
       reaper.ImGui_SetNextItemWidth(ctx, 90)
       _, state.cue_number = reaper.ImGui_InputText(ctx, "##cue_number", state.cue_number)
 
+      local cue_number_greyed = not state.use_cue_number and can_disable()
+      if cue_number_greyed then
+        reaper.ImGui_BeginDisabled(ctx, true)
+      end
+
+      local cue_number_field_height = reaper.ImGui_GetFrameHeight(ctx)
+
+      reaper.ImGui_SameLine(ctx, 0, 2)
+      if SB.button(ctx, "-", 22, cue_number_field_height) then
+        state.cue_number = step_cue_number(state.cue_number, -1)
+      end
+
+      reaper.ImGui_SameLine(ctx, 0, 2)
+      if SB.button(ctx, "+", 22, cue_number_field_height) then
+        state.cue_number = step_cue_number(state.cue_number, 1)
+      end
+
+      if cue_number_greyed then
+        reaper.ImGui_EndDisabled(ctx)
+      end
+
       reaper.ImGui_SameLine(ctx)
       _, state.create_multiple_cues = reaper.ImGui_Checkbox(
         ctx,
@@ -667,6 +699,7 @@ if TEST_HOOK then
   TEST_HOOK.set_state = set_state
   TEST_HOOK.reset_to_defaults = reset_to_defaults
   TEST_HOOK.base_name = base_name
+  TEST_HOOK.step_cue_number = step_cue_number
   TEST_HOOK.build_marker_name = build_marker_name
   TEST_HOOK.prefill_from = prefill_from
   TEST_HOOK.prefill_from_selection = prefill_from_selection

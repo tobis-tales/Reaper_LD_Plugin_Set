@@ -630,6 +630,29 @@ check(run("on 7.75 renaming falls back to SetProjectMarker4", { lane_api = false
   return marker(3).name == "Kick(1)[Top]^Kick^", "3 markers via the old call"
 end))
 
+check(run("the cue number arrows step by one", {}, function(hook)
+  local cases = {
+    { "1", 1, "2" },
+    { "2", -1, "1" },
+    { "1", -1, "1" },
+    { "1.5", 1, "2.5" },
+    { "", 1, "1" },
+    { "abc", -1, "1" },
+    -- "2.0" parses as a Lua float, not an integer -- without format_cue_number
+    -- the result prints as "3.0" instead of "3"
+    { "2.0", 1, "3" },
+  }
+
+  for _, case in ipairs(cases) do
+    local got = hook.step_cue_number(case[1], case[2])
+    if got ~= case[3] then
+      return false, string.format("%q %+d -> %q, wanted %q", case[1], case[2], got, case[3])
+    end
+  end
+
+  return true, "7 cases"
+end))
+
 check(run("an empty selection writes nothing", {}, function(hook)
   if hook.run_rename({}, "manager") ~= 0 then return false, "claims it renamed something" end
 

@@ -26,6 +26,10 @@ If you build light shows to a timeline, you probably live in REAPER's markers: o
   <img src="Tutorials/img/copy-01a-window.png" alt="Copy Markers" width="46%">
 </div>
 
+## What's new in 1.1.2
+
+- **Rename selected markers** — `-`/`+` buttons next to the cue number field step it down or up by one.
+
 ## What's new in 1.1.1
 
 - **Rename selected markers** — "Also set colour" is on by default (a random colour per run; untick it to leave the marker colours alone).
