@@ -71,7 +71,7 @@ local function make_reaper()
           return nil
         end
 
-        return function(_, a)
+        return function(_, a, b)
           if key == "ImGui_PushStyleColor" then state.colors = state.colors + 1 end
           if key == "ImGui_PopStyleColor" then state.colors = state.colors - (a or 1) end
           if key == "ImGui_PushStyleVar" then state.vars = state.vars + 1 end
@@ -129,6 +129,8 @@ local function make_reaper()
           if key == "ImGui_Button" then return false end
           if key == "ImGui_Checkbox" then return false, a end
           if key == "ImGui_InputText" then return false, "text" end
+          -- (ctx, label, current_item, items): unchanged, current index stays
+          if key == "ImGui_Combo" then return false, b end
           if key == "ImGui_InputInt" then return false, 24 end
           if key:match("^ImGui_Col_") or key:match("^ImGui_StyleVar_")
             or key:match("^ImGui_Cond_") or key:match("Flags") then
