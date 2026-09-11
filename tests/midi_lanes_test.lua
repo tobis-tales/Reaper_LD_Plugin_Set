@@ -327,10 +327,17 @@ local function load_plugin()
   dofile(folder .. "MIDI notes to project markers.lua")
   rawset(_G, "MIDI_TEST", nil)
 
+  -- what the plugin itself starts with, before the scenario touches anything
+  hook.loaded_defaults = {
+    use_ma_tools_syntax = hook.state.use_ma_tools_syntax,
+    command = hook.state.command,
+    replace_existing = hook.state.replace_existing,
+  }
+
   -- the state table lives in the plugin and survives between scenarios,
   -- so every run starts from the documented defaults
   hook.state.use_ma_tools_syntax = true
-  hook.state.command = "GO"
+  hook.state.command = "Top"
   hook.state.replace_existing = true
 
   for key, value in pairs(scenario.state or {}) do
@@ -393,7 +400,7 @@ run("a  pitch rank, not pitch, one group", {
 
   hook.execute(groups)
   return names_equal(marker_names(), {
-    "C1(1)[GO]^Kick^", "C2(2)[GO]^Kick^", "C1(1)[GO]^Kick^", "C3(3)[GO]^Kick^",
+    "C1(1)[Top]^Kick^", "C2(2)[Top]^Kick^", "C1(1)[Top]^Kick^", "C3(3)[Top]^Kick^",
   })
 end)
 
@@ -409,7 +416,7 @@ run("b  custom note name, rank still by pitch", {
 }, function(hook)
   local groups = hook.plan_groups(hook.collect_all_midi_takes())
   hook.execute(groups)
-  return names_equal(marker_names(), { "Boom(1)[GO]^Kick^", "C3(2)[GO]^Kick^" })
+  return names_equal(marker_names(), { "Boom(1)[Top]^Kick^", "C3(2)[Top]^Kick^" })
 end)
 
 -- c) the syntax is a choice, and an empty command drops its brackets
@@ -429,9 +436,9 @@ run("c  syntax off, and an empty command", {
     return false, "empty command gives " .. hook.marker_name(groups[1], note)
   end
 
-  hook.state.command = "GO"
-  return hook.marker_name(groups[1], groups[1].notes[2]) == "C2(2)[GO]^Kick^",
-    "C1 / C1(1)^Kick^ / C2(2)[GO]^Kick^"
+  hook.state.command = "Top"
+  return hook.marker_name(groups[1], groups[1].notes[2]) == "C2(2)[Top]^Kick^",
+    "C1 / C1(1)^Kick^ / C2(2)[Top]^Kick^"
 end)
 
 -- d) two tracks, one basename: one lane, one ranking, and a warning first
@@ -483,7 +490,7 @@ run("d2 same basename, Yes: one lane for both", {
   -- the colour of the FIRST track of the group
   if lanes[3].color ~= 0x10A141E then return false, "lane colour " .. tostring(lanes[3].color) end
 
-  local ok, detail = names_equal(marker_names(), { "C2(2)[GO]^Kick^", "C1(1)[GO]^Kick^" })
+  local ok, detail = names_equal(marker_names(), { "C2(2)[Top]^Kick^", "C1(1)[Top]^Kick^" })
   if not ok then return false, detail end
 
   for _, entry in ipairs(PROJECT) do
@@ -512,8 +519,8 @@ run("e  two tracks, two lanes, two colours", {
     return false, "lane colours " .. tostring(lanes[3].color) .. "/" .. tostring(lanes[4].color)
   end
 
-  local kick = markers_named("C2(1)[GO]^Kick^")[1]
-  local snare = markers_named("D2(1)[GO]^Snare^")[1]
+  local kick = markers_named("C2(1)[Top]^Kick^")[1]
+  local snare = markers_named("D2(1)[Top]^Snare^")[1]
   if not kick or not snare then return false, table.concat(marker_names(), " ") end
   if kick.lane ~= 2 or kick.color ~= 0x10A141E then
     return false, "kick marker lane " .. tostring(kick.lane) .. " colour " .. tostring(kick.color)
@@ -569,7 +576,7 @@ run("g  second run replaces what is in the lane", {
   end
   if count("delete") ~= first then return false, count("delete") .. " deletes" end
   return names_equal(marker_names(), {
-    "C1(1)[GO]^Kick^", "C2(2)[GO]^Kick^", "C1(1)[GO]^Kick^", "C3(3)[GO]^Kick^",
+    "C1(1)[Top]^Kick^", "C2(2)[Top]^Kick^", "C1(1)[Top]^Kick^", "C3(3)[Top]^Kick^",
   })
 end)
 
@@ -603,7 +610,7 @@ run("i  7.75: no lanes, no lane calls", {
   if count("lane_order") ~= 0 or count("set_lane") ~= 0 then return false, "touched lanes" end
 
   local ok, detail = names_equal(marker_names(), {
-    "C1(1)[GO]^Kick^", "C2(2)[GO]^Kick^", "C1(1)[GO]^Kick^", "C3(3)[GO]^Kick^",
+    "C1(1)[Top]^Kick^", "C2(2)[Top]^Kick^", "C1(1)[Top]^Kick^", "C3(3)[Top]^Kick^",
   })
   if not ok then return false, detail end
 
@@ -648,7 +655,7 @@ run("k  a looped item repeats the note", {
   local result = hook.execute(groups)
   if result.created ~= 2 then return false, result.created .. " markers from one looped note" end
 
-  local made = markers_named("C2(1)[GO]^Kick^")
+  local made = markers_named("C2(1)[Top]^Kick^")
   if #made ~= 2 then return false, #made .. " markers with that name" end
   return math.abs(made[1].pos - 0.0) < 0.001 and math.abs(made[2].pos - 4.0) < 0.001,
     "markers at " .. made[1].pos .. " and " .. made[2].pos
@@ -669,6 +676,36 @@ run("l  the preflight count is the real count", {
 
   local result = hook.execute(groups)
   return result.created == planned, planned .. " planned, " .. result.created .. " created"
+end)
+
+-- m) the plugin starts with Top, and the Command list offers Go/Top/Flash
+run("m  default command Top, list Go/Top/Flash", {
+  tracks = { kick_track() },
+}, function(hook)
+  local d = hook.loaded_defaults
+  if d.command ~= "Top" then return false, "default command " .. string.format("%q", d.command) end
+  if not d.use_ma_tools_syntax then return false, "syntax off by default" end
+  if not d.replace_existing then return false, "replace off by default" end
+
+  if table.concat(hook.COMMANDS, "/") ~= "Go/Top/Flash" then
+    return false, "list is " .. table.concat(hook.COMMANDS, "/")
+  end
+
+  local items, index, list = hook.command_choices("Top")
+  if items ~= "Go\0Top\0Flash\0" then return false, "items " .. string.format("%q", items) end
+  if index ~= 1 then return false, "Top is index " .. tostring(index) end
+  if #list ~= 3 then return false, #list .. " entries for a standard command" end
+
+  -- a command outside the three is shown as a fourth entry while it is active
+  items, index, list = hook.command_choices("On")
+  if items ~= "Go\0Top\0Flash\0On\0" then return false, "items " .. string.format("%q", items) end
+  if index ~= 3 or list[4] ~= "On" then return false, "On is index " .. tostring(index) end
+
+  -- and the name built from the loaded default reads [Top]
+  hook.state.command = d.command
+  local groups = hook.plan_groups(hook.collect_all_midi_takes())
+  local name = hook.marker_name(groups[1], groups[1].notes[1])
+  return name == "C1(1)[Top]^Kick^", name
 end)
 
 print(fails == 0 and "\nALL PASS" or ("\nFAILURES: " .. fails))

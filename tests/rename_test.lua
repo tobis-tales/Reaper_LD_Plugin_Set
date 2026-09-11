@@ -231,8 +231,46 @@ local function check(ok) if not ok then fails = fails + 1 end end
 print("Rename selected markers -- naming, prefill, colour:\n")
 
 check(run("defaults build the full MA syntax", {}, function(hook)
+  -- 1.1.1: colour on by default, command Top from the Go/Top/Flash list
+  local d = hook.DEFAULTS
+  if d.set_colour ~= true then return false, "set_colour defaults to " .. tostring(d.set_colour) end
+  if d.colour_mode ~= "random" then return false, "colour_mode defaults to " .. tostring(d.colour_mode) end
+  if d.command_name ~= "Top" then return false, "command defaults to " .. string.format("%q", d.command_name) end
+  if table.concat(hook.COMMANDS, "/") ~= "Go/Top/Flash" then
+    return false, "list is " .. table.concat(hook.COMMANDS, "/")
+  end
+
+  local s = hook.get_state()
+  if s.set_colour ~= true or s.command_name ~= "Top" then return false, "state does not start from the defaults" end
+
   local built = hook.build_marker_name("Kick", 0)
   return built == "Kick(1)[Top]^Kick^", built
+end))
+
+check(run("the command list carries the current text", {}, function(hook)
+  -- one of the three: three entries, the current one selected
+  for i, name in ipairs({ "Go", "Top", "Flash" }) do
+    local items, index, list = hook.command_choices(name)
+    if items ~= "Go\0Top\0Flash\0" then return false, name .. ": items " .. string.format("%q", items) end
+    if index ~= i - 1 then return false, name .. " is index " .. tostring(index) end
+    if #list ~= 3 or list[index + 1] ~= name then return false, name .. ": list does not point at it" end
+  end
+
+  -- a prefilled command outside the three is a fourth entry while it is active
+  hook.prefill_from("Snare(3)[On]^Main^")
+  local current = hook.get_state().command_name
+  if current ~= "On" then return false, "prefill gave " .. string.format("%q", current) end
+
+  local items, index, list = hook.command_choices(current)
+  if items ~= "Go\0Top\0Flash\0On\0" then return false, "items " .. string.format("%q", items) end
+  if index ~= 3 or list[4] ~= "On" then return false, "On is index " .. tostring(index) end
+
+  -- picking a standard entry means: that text, and the fourth entry is gone
+  hook.set_state({ command_name = list[1] })
+  items, index = hook.command_choices(hook.get_state().command_name)
+  if items ~= "Go\0Top\0Flash\0" or index ~= 0 then return false, "after picking Go: " .. string.format("%q", items) end
+
+  return hook.build_marker_name("Kick", 0) == "Kick(3)[Go]^Main^", "3 + On as fourth, Go picked"
 end))
 
 check(run("an empty field leaves its element out", {}, function(hook)
@@ -497,6 +535,8 @@ check(run("reset puts every field back", {}, function(hook)
 end))
 
 check(run("renaming without the colour option touches no colour", {}, function(hook, MARKERS)
+  -- colour is on by default since 1.1.1, so "without" has to be said
+  hook.set_state({ set_colour = false })
   local entries = entries_for(MARKERS, { 1, 2, 3, 4, 5, 6 }, "manager")
   hook.run_rename(entries, "manager")
 
@@ -577,6 +617,8 @@ check(run("on 7.78 renaming goes through P_NAME", {}, function(hook, MARKERS)
 end))
 
 check(run("on 7.75 renaming falls back to SetProjectMarker4", { lane_api = false }, function(hook, MARKERS)
+  -- no colour here, so every SetProjectMarker4 call is a rename
+  hook.set_state({ set_colour = false })
   local entries = entries_for(MARKERS, { 1, 2, 3 }, "manager")
   hook.run_rename(entries, "manager")
 

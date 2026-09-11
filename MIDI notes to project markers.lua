@@ -27,9 +27,36 @@ local run_with_scope
 
 local state = {
   use_ma_tools_syntax = true,
-  command = "GO",
+  command = "Top",
   replace_existing = true,
 }
+
+-- The commands offered in the Command list. The state keeps the TEXT, so
+-- MA.format, the test hook and the fallback path work as before.
+local COMMANDS = { "Go", "Top", "Flash" }
+
+-- Items for ImGui_Combo (each one null-terminated) and the 0-based index of
+-- the current command. A command outside the three (set by a test, say) is
+-- shown as a fourth entry for as long as it is active; choosing one of the
+-- three drops it.
+local function command_choices(current)
+  local items = {}
+  local index
+
+  for i, name in ipairs(COMMANDS) do
+    items[i] = name
+    if name == current then
+      index = i - 1
+    end
+  end
+
+  if index == nil then
+    items[#items + 1] = current
+    index = #items - 1
+  end
+
+  return table.concat(items, "\0") .. "\0", index, items
+end
 
 local folder = debug.getinfo(1, "S").source:match("@?(.*[/\\])") or ""
 
@@ -550,14 +577,14 @@ local function choose_scope_fallback()
 
   local ma_result = reaper.ShowMessageBox(
     "Name the markers in MA-Tools syntax?\n\n" ..
-    "Yes = C4(1)[GO]^Kick^\n" ..
+    "Yes = C4(1)[Top]^Kick^\n" ..
     "No = plain note names",
     SCRIPT_TITLE,
     4
   )
   state.use_ma_tools_syntax = ma_result == 6
 
-  -- there is no field to type a command into here, so it stays the default
+  -- there is no command list here, so it stays the default ("Top")
   if MARKERS.lanes_available() then
     local replace = reaper.ShowMessageBox(
       "Replace existing markers in these lanes?",
@@ -599,8 +626,12 @@ local function choose_scope()
       SB.label(ctx, "Example: " .. example_name())
 
       if state.use_ma_tools_syntax then
+        local command_items, command_index, command_list = command_choices(state.command)
         reaper.ImGui_SetNextItemWidth(ctx, 120)
-        _, state.command = reaper.ImGui_InputText(ctx, "Command", state.command)
+        local command_changed, chosen = reaper.ImGui_Combo(ctx, "Command", command_index, command_items)
+        if command_changed and command_list[chosen + 1] then
+          state.command = command_list[chosen + 1]
+        end
       end
 
       reaper.ImGui_Separator(ctx)
@@ -668,6 +699,8 @@ end
 local TEST_HOOK = rawget(_G, "MIDI_TEST")
 if TEST_HOOK then
   TEST_HOOK.state = state
+  TEST_HOOK.COMMANDS = COMMANDS
+  TEST_HOOK.command_choices = command_choices
   TEST_HOOK.PALETTE = PALETTE
   TEST_HOOK.palette_colour = palette_colour
   TEST_HOOK.group_colour = group_colour

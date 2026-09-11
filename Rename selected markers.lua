@@ -52,9 +52,37 @@ local DEFAULTS = {
   multiple_cue_count = 1,
   command_name = "Top",
   sequence_name = "MarkerName",
-  set_colour = false,
+  set_colour = true,
   colour_mode = "random",
 }
+
+-- The commands offered in the Command list. The state keeps the TEXT, not the
+-- index, so the test hook, MA.format, prefill_from and the fallback dialog
+-- work exactly as before.
+local COMMANDS = { "Go", "Top", "Flash" }
+
+-- Items for ImGui_Combo (each one null-terminated) and the 0-based index of
+-- the current command. A command outside the three -- prefilled from a marker
+-- that says "On", say -- is shown as a fourth entry for as long as it is
+-- active; choosing one of the three drops it.
+local function command_choices(current)
+  local items = {}
+  local index
+
+  for i, name in ipairs(COMMANDS) do
+    items[i] = name
+    if name == current then
+      index = i - 1
+    end
+  end
+
+  if index == nil then
+    items[#items + 1] = current
+    index = #items - 1
+  end
+
+  return table.concat(items, "\0") .. "\0", index, items
+end
 
 local state = {}
 
@@ -534,8 +562,12 @@ local function run_gui(SB)
       _, state.multiple_cue_count = reaper.ImGui_InputInt(ctx, "How many cues", state.multiple_cue_count)
       state.multiple_cue_count = math.max(1, math.floor(tonumber(state.multiple_cue_count) or 1))
 
-      reaper.ImGui_SetNextItemWidth(ctx, 360)
-      _, state.command_name = reaper.ImGui_InputText(ctx, "Command", state.command_name)
+      local command_items, command_index, command_list = command_choices(state.command_name)
+      reaper.ImGui_SetNextItemWidth(ctx, 120)
+      local command_changed, chosen = reaper.ImGui_Combo(ctx, "Command", command_index, command_items)
+      if command_changed and command_list[chosen + 1] then
+        state.command_name = command_list[chosen + 1]
+      end
 
       SB.label(ctx, "Empty field leaves that element out. MarkerName = the name of the first selected marker.")
 
@@ -629,6 +661,8 @@ end
 local TEST_HOOK = rawget(_G, "RENAME_TEST")
 if TEST_HOOK then
   TEST_HOOK.DEFAULTS = DEFAULTS
+  TEST_HOOK.COMMANDS = COMMANDS
+  TEST_HOOK.command_choices = command_choices
   TEST_HOOK.get_state = get_state
   TEST_HOOK.set_state = set_state
   TEST_HOOK.reset_to_defaults = reset_to_defaults
