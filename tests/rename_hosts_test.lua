@@ -226,7 +226,7 @@ do
     frame()
 
     local renamed = marker(2).name
-    check(footer_text == "3 markers renamed.",
+    check(footer_text == "3 markers renamed and coloured.",
       "a2) clicking Rename renames the selection",
       "footer " .. tostring(footer_text))
     check(renamed == "verse(1)[Top]^verse^"
@@ -256,7 +256,7 @@ do
     click_label = nil
     frame()
 
-    check(footer_text == "3 markers renamed.",
+    check(footer_text == "3 markers renamed and coloured.",
       "b2) the same click writes into the workspace footer",
       "footer " .. tostring(footer_text))
     check(marker(2).name == "verse(1)[Top]^verse^",
