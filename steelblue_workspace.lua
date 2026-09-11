@@ -3,10 +3,11 @@
 -- next to the Mixer: a brand band with the live BPM read-out and what is
 -- selected in the Region/Marker Manager, a row of tabs, and a status line.
 --
--- The tabs move in one at a time. "Rename selected markers" is here: the same
--- steelblue_rename.lua panel its own script draws, laid out wide instead of
--- stacked. MIDI and Copy follow in the next step. The four single-script
--- plugins keep working exactly as they do today; nothing here replaces them.
+-- Each tab draws the same panel module its own script draws --
+-- steelblue_rename.lua, steelblue_midi.lua, steelblue_copy.lua -- laid out wide
+-- instead of stacked. The BPM analyzer follows in the next step. The four
+-- single-script plugins keep working exactly as they do today; nothing here
+-- replaces them.
 
 local SCRIPT_TITLE = "steelblue LD Tools"
 
@@ -45,14 +46,43 @@ if not RENAME then
   return
 end
 
--- One panel for the whole run, so a half-typed cue name survives a trip to
--- another tab. The plugin's own title, not the workspace's: it is what the
--- fallback dialog and the message boxes say, and they belong to Rename.
+local MIDI = load_module("steelblue_midi.lua")
+if not MIDI then
+  return
+end
+
+local COPY = load_module("steelblue_copy.lua")
+if not COPY then
+  return
+end
+
+-- One panel each for the whole run, so a half-typed cue name or a pinned
+-- target survives a trip to another tab. The plugin's own title, not the
+-- workspace's: it is what the fallback dialogs and the message boxes say, and
+-- they belong to the plugin.
 local panel_rename = RENAME.create({
   MARKERS = MARKERS,
   MA = MA,
   title = "Rename selected markers",
 })
+
+local panel_midi = MIDI.create({
+  MARKERS = MARKERS,
+  MA = MA,
+  title = "MIDI notes to project markers",
+})
+
+local panel_copy = COPY.create({
+  MARKERS = MARKERS,
+  title = "Copy Markers",
+})
+
+-- The panel behind each tab id, so the footer and after_frame can ask by id.
+local PANELS = {
+  rename = panel_rename,
+  midi = panel_midi,
+  copy = panel_copy,
+}
 
 -- ---------------------------------------------------------------- persistence
 
@@ -259,25 +289,23 @@ local function run_gui(SB)
   local was_docked = false     -- it has been docked at some point this run
   local redock = false         -- the "Dock" button, one frame old
 
-  local status = "Ready."
-  local status_kind = nil
-
   -- Reading the Region/Marker Manager means asking JS_ReaScriptAPI to
   -- enumerate windows and walk a list view -- far too heavy for 60 fps. Same
-  -- 150 ms poll the other plugins use.
+  -- 150 ms poll the other plugins use. The one answer feeds the header band
+  -- AND the open panel: the panels take it through opts.entries and do not
+  -- poll a second time.
   local POLL_INTERVAL = 0.15
   local last_poll = -1
-  local cached_entries, cached_source = {}, nil
+  local cached_entries, cached_reason, cached_source = {}, nil, nil
 
   local function selection()
     local now = reaper.time_precise()
     if now - last_poll >= POLL_INTERVAL then
       last_poll = now
-      local entries, _reason, source = MARKERS.selected()
-      cached_entries, cached_source = entries, source
+      cached_entries, cached_reason, cached_source = MARKERS.selected()
     end
 
-    return cached_entries, cached_source
+    return cached_entries, cached_reason, cached_source
   end
 
   -- The BPM block is a placeholder in this step: the numbers and all three
@@ -368,7 +396,7 @@ local function run_gui(SB)
       was_docked = false
     end
 
-    local entries, source = selection()
+    local entries, reason, source = selection()
 
     local visible, open, font = SB.begin_dock_window(ctx, SCRIPT_TITLE, {
       dock_now = dock_now,
@@ -388,18 +416,20 @@ local function run_gui(SB)
 
       set_active_tab(SB.tab_bar(ctx, TABS, state.active_tab))
 
+      -- Every panel gets the one selection the workspace already read, and
+      -- none of them draws its own "N markers selected" block: the header band
+      -- says that. No Close/Cancel button either -- it would close the whole
+      -- workspace, and the tab is not a window.
       local tab = tab_by_id(state.active_tab) or TABS[1]
-      if tab.id == "rename" then
-        local _, window_h = reaper.ImGui_GetWindowSize(ctx)
-        panel_rename.frame(ctx, SB, {
-          wide = true,
-          -- the header band already says how many markers are selected
-          show_selection = false,
-          show_reference = type(window_h) == "number" and window_h >= REFERENCE_MIN_HEIGHT,
-        })
-      else
-        SB.label(ctx, tab.plugin .. " moves in here in the next step.")
-      end
+      local _, window_h = reaper.ImGui_GetWindowSize(ctx)
+      PANELS[tab.id].frame(ctx, SB, {
+        wide = true,
+        show_selection = false,
+        show_reference = type(window_h) == "number" and window_h >= REFERENCE_MIN_HEIGHT,
+        entries = entries,
+        reason = reason,
+        source = source,
+      })
 
       -- Push the status line to the bottom edge: the docker owns the height,
       -- so "after the content" is nowhere near the bottom here.
@@ -410,18 +440,17 @@ local function run_gui(SB)
 
       -- Every tab writes into the one status line at the bottom, so the panel
       -- that is open says what happened and the others stay quiet.
-      local text, kind = status, status_kind
-      if state.active_tab == "rename" then
-        text, kind = panel_rename.status()
-      end
-
-      SB.footer(ctx, text, kind)
+      SB.footer(ctx, PANELS[tab.id].status())
     end
 
     SB.end_window(ctx, visible, font)
 
-    -- outside the frame: safe to touch the project
-    panel_rename.after_frame()
+    -- outside the frame: safe to touch the project. Every panel, not only the
+    -- open one -- a click lands in the panel that was drawn this frame, and
+    -- that is the one whose queue holds it.
+    for _, panel in pairs(PANELS) do
+      panel.after_frame()
+    end
 
     first_frame = false
 

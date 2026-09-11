@@ -94,11 +94,11 @@ local function make_reaper()
           if key == "ImGui_Begin" then return true, true end
           if key == "ImGui_GetCursorScreenPos" then return 100, 100 end
           if key == "ImGui_GetContentRegionAvail" then return 400, 300 end
-          -- A docker that is short for the first half of the run and tall for
-          -- the second, so one pass renders the workspace both with and without
-          -- the reference lines.
+          -- A docker that is short for the first five frames and tall from
+          -- then on, so the rename tab (frames 1-10, see BeginTabItem below)
+          -- renders both with and without the reference lines.
           if key == "ImGui_GetWindowSize" then
-            return 1512, state.frame >= 15 and 500 or 400
+            return 1512, state.frame >= 6 and 500 or 400
           end
           if key == "ImGui_GetCursorPos" then return 12, 12 end
           if key == "ImGui_GetCursorPosX" then return 12 end
@@ -116,17 +116,22 @@ local function make_reaper()
           if key == "ImGui_IsWindowDocked" then return state.frame >= 10 end
           -- Real tab bars hand "true" to exactly one tab item -- the selected
           -- one. Returning it for every tab would leave every tab looking
-          -- active at once and hide an unbalanced EndTabItem.
+          -- active at once and hide an unbalanced EndTabItem. WHICH one is
+          -- selected moves along every ten frames (1-10 the first tab, 11-20
+          -- the second, 21-30 the third), so one 30-frame run draws every
+          -- tab's panel; the label check below proves it did.
           if key == "ImGui_BeginTabBar" then state.tab_items = 0 return true end
           if key == "ImGui_BeginTabItem" then
             state.tab_items = state.tab_items + 1
-            if state.tab_items ~= 1 then
+            if state.tab_items ~= (state.frame - 1) // 10 + 1 then
               return false
             end
             state.tabs = state.tabs + 1
             return true
           end
-          if key == "ImGui_Button" then return false end
+          -- every button label that was submitted, so a run can be asked
+          -- afterwards whether a panel really got drawn
+          if key == "ImGui_Button" then state.labels[a] = true return false end
           if key == "ImGui_Checkbox" then return false, a end
           if key == "ImGui_InputText" then return false, "text" end
           -- (ctx, label, current_item, items): unchanged, current index stays
@@ -156,12 +161,23 @@ local plugins = {
   "steelblue_workspace.lua",
 }
 
+-- One button per tab that only that tab's panel draws. Rendering 30 frames of
+-- the workspace proves nothing about a tab whose BeginTabItem never said
+-- "true" -- these labels are the evidence that all three panels were drawn.
+local expected_labels = {
+  ["steelblue_workspace.lua"] = {
+    "Rename selected markers",
+    "All MIDI items in the project",
+    "Copy to cursor",
+  },
+}
+
 local fails = 0
 print("rendering each script for 30 frames against a fake REAPER:\n")
 
 for _, name in ipairs(plugins) do
   state = { frame = 0, colors = 0, vars = 0, fonts = 0, windows = 0, widths = 0,
-            tabs = 0, tab_items = 0, missing = {}, messages = {} }
+            tabs = 0, tab_items = 0, missing = {}, messages = {}, labels = {} }
 
   local get_deferred
   reaper, get_deferred = make_reaper()
@@ -194,6 +210,12 @@ for _, name in ipairs(plugins) do
 
   if frames == 0 then
     problems[#problems + 1] = "rendered 0 frames — the plugin never drew anything"
+  end
+
+  for _, label in ipairs(expected_labels[name] or {}) do
+    if not state.labels[label] then
+      problems[#problems + 1] = "never drew the button '" .. label .. "'"
+    end
   end
 
   if #problems == 0 then

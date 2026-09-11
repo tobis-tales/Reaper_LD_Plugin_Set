@@ -27,7 +27,7 @@
 
 local M = {}
 
-M.VERSION = "1.1"
+M.VERSION = "1.2"
 
 -- The colour of the last run, remembered across REAPER sessions.
 local EXT_SECTION = "steelblue_rename"
@@ -511,15 +511,22 @@ function M.create(env)
   local last_poll = -1
   local cached_entries, cached_reason, cached_source = {}, nil, nil
 
-  local function selection()
-    local now = reaper.time_precise()
-    if now - last_poll >= POLL_INTERVAL then
-      last_poll = now
-      cached_entries, cached_reason, cached_source = MARKERS.selected()
-
-      if not prefilled and #cached_entries > 0 then
-        prefill_from_selection(cached_entries, cached_source)
+  -- A host that already polls (the workspace does, for its header band) hands
+  -- its answer in through opts.entries, and the panel does not ask a second
+  -- time. The prefill still happens here either way: it belongs to the panel.
+  local function selection(opts)
+    if opts.entries then
+      cached_entries, cached_reason, cached_source = opts.entries, opts.reason, opts.source
+    else
+      local now = reaper.time_precise()
+      if now - last_poll >= POLL_INTERVAL then
+        last_poll = now
+        cached_entries, cached_reason, cached_source = MARKERS.selected()
       end
+    end
+
+    if not prefilled and #cached_entries > 0 then
+      prefill_from_selection(cached_entries, cached_source)
     end
 
     return cached_entries, cached_reason, cached_source
@@ -744,12 +751,15 @@ function M.create(env)
   --   opts.show_reference  the legend; the workspace hides it when the docker
   --                        is too short for it
   --   opts.show_close      draw a Close button after Reset
+  --   opts.entries         the selection the host has already polled, with
+  --   opts.source          its source (and opts.reason); when given, the
+  --                        panel does not poll on its own
   local function frame(ctx, SB, opts)
     opts = opts or {}
 
     local close_requested = false
 
-    local entries, _, source = selection()
+    local entries, _, source = selection(opts)
     local selected_count = #entries
     -- the same marker the run will take its name from, so the preview cannot
     -- show one thing and the rename write another
