@@ -26,6 +26,12 @@ If you build light shows to a timeline, you probably live in REAPER's markers: o
   <img src="Tutorials/img/copy-01a-window.png" alt="Copy Markers" width="46%">
 </div>
 
+## What's new in 1.1.1
+
+- **Rename selected markers** — "Also set colour" is on by default (a random colour per run; untick it to leave the marker colours alone).
+- **Rename selected markers** — the Command field is a list: Go, Top, Flash (default Top). A selected marker that already carries another command keeps it, shown as a fourth entry until you pick one of the three.
+- **MIDI notes to project markers** — the same Command list, default Top (was a free-text field with `GO`).
+
 ## What's new in 1.1.0
 
 - **Rename selected markers** — three free-text fields (cue name, command, sequence name; leave one empty to skip it), a "Reset to defaults" button, and an optional colour (random or last used). Recognises existing MA-Tools syntax instead of wrapping it a second time, and keeps the marker's ruler lane.
