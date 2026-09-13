@@ -1,9 +1,8 @@
 -- v2a: the workspace shell's state rules, through the WORKSPACE_TEST hook.
 --
 -- Everything here is decided outside the ImGui frame, which is exactly why it
--- can be tested without REAPER: whether a frame asks for the docker, whether
--- the user pulled the window out on purpose, which tab is open, and what the
--- selection line says.
+-- can be tested without REAPER: whether a frame asks for the docker, which tab
+-- is open, and what the selection line says.
 --
 -- The ExtState fake records the persist flag, because "remembered across
 -- REAPER restarts" is half the point of storing these at all -- a call that
@@ -30,8 +29,9 @@ local function build_reaper(initial)
                                     value = value, persist = persist }
       ext_state[key] = value
     end,
-    DeleteExtState = function(section, key)
-      ext_calls[#ext_calls + 1] = { kind = "delete", section = section, key = key }
+    DeleteExtState = function(section, key, persist)
+      ext_calls[#ext_calls + 1] = { kind = "delete", section = section, key = key,
+                                    persist = persist }
       ext_state[key] = nil
     end,
     HasExtState = function(_, key) return ext_state[key] ~= nil end,
@@ -74,13 +74,18 @@ local function set_calls(key)
   return found
 end
 
-local function deleted(key)
+local function delete_calls(key)
+  local found = {}
   for _, call in ipairs(ext_calls) do
     if call.kind == "delete" and call.key == key then
-      return true
+      found[#found + 1] = call
     end
   end
-  return false
+  return found
+end
+
+local function deleted(key)
+  return #delete_calls(key) > 0
 end
 
 local fails = 0
@@ -102,67 +107,33 @@ print("\nsteelblue_workspace.lua -- shell state rules:\n")
 
 -- ---------------------------------------------------------------- docking
 
-run("a) the first frame of a run asks for the docker", function()
+-- Both halves of Tobi's decision (2026-09-11: the workspace is always docked).
+-- The docker placement does not survive a REAPER restart, so every run has to
+-- ask again -- but only once: Cond_Always on every frame would pin the window
+-- down and it could never be dragged anywhere at all.
+run("a) docks on the first frame of every run, and never again by itself", function()
   local W = load_workspace()
-  local dock_now = W.dock_decision(true, nil, false, false)
-  return dock_now == true, "dock_decision(first frame) = " .. tostring(dock_now)
+  local first = W.dock_decision(true)
+  local later = W.dock_decision(false)
+  return first == true and later == false,
+    "dock_decision(true)=" .. tostring(first) .. " dock_decision(false)=" .. tostring(later)
 end)
 
--- The one rule the probe forced on us: Cond_Always would drag a deliberately
--- floating window straight back into the docker on every start.
-run("b) a window the user pulled out is never dragged back", function()
+-- The 2.0 previews had a "Dock" button and remembered a deliberately floating
+-- window in this entry. Both are gone; the leftover is written with persist,
+-- so without this it would sit in reaper-extstate.ini forever.
+run("b) a stale undocked flag from 2.0 previews is deleted on load", function()
   local W = load_workspace({ undocked = "1" })
-  if W.state.undocked ~= true then
-    return false, "undocked flag not read from ExtState"
-  end
-  local dock_now = W.dock_decision(true, nil, W.state.undocked, false)
-  return dock_now == false, "dock_decision(first frame, undocked) = " .. tostring(dock_now)
-end)
-
--- Cond_Always on every frame would pin the window down: it could never be
--- dragged anywhere, and a machine where this docker number is wrong would
--- fight the user forever.
-run("c) later frames do not ask again, docked or not", function()
-  local W = load_workspace()
-  local docked = W.dock_decision(false, true, false, false)
-  local floating = W.dock_decision(false, false, false, false)
-  return docked == false and floating == false,
-    "docked=" .. tostring(docked) .. " floating=" .. tostring(floating)
-end)
-
-run("d) the Dock button re-docks even after the window was pulled out", function()
-  local W = load_workspace({ undocked = "1" })
-  local dock_now = W.dock_decision(false, false, true, true)
-  return dock_now == true, "dock_decision(redock) = " .. tostring(dock_now)
-end)
-
-run("e) only a window that WAS docked counts as pulled out", function()
-  local W = load_workspace()
-  local pulled_out = W.undock_choice(true, false, false)
-  local never_docked = W.undock_choice(false, false, false)
-  local still_docked = W.undock_choice(true, true, false)
-  local remembered = W.undock_choice(false, true, true)
-  return pulled_out == true and never_docked == false
-    and still_docked == false and remembered == true,
-    string.format("pulled_out=%s never_docked=%s still_docked=%s remembered=%s",
-      tostring(pulled_out), tostring(never_docked), tostring(still_docked), tostring(remembered))
-end)
-
-run("f) the undocked choice is remembered across REAPER restarts", function()
-  local W = load_workspace()
-  W.set_undocked(true)
-  local calls = set_calls("undocked")
-  if #calls ~= 1 then return false, #calls .. " writes, expected 1" end
-  if calls[1].value ~= "1" then return false, "wrote " .. tostring(calls[1].value) end
-  if calls[1].persist ~= true then return false, "written without persist" end
-
-  local W2 = load_workspace(ext_state)
-  return W2.state.undocked == true, "written as \"1\" with persist, read back as true"
+  local calls = delete_calls("undocked")
+  if #calls ~= 1 then return false, #calls .. " deletes, expected 1" end
+  if calls[1].persist ~= true then return false, "deleted without persist" end
+  if W.state.undocked ~= nil then return false, "the state still carries an undocked field" end
+  return true, "deleted with persist, no undocked field left in the state"
 end)
 
 -- ---------------------------------------------------------------- tabs
 
-run("g) the open tab is remembered across REAPER restarts", function()
+run("c) the open tab is remembered across REAPER restarts", function()
   local W = load_workspace()
   if W.state.active_tab ~= "rename" then
     return false, "fresh install opened " .. tostring(W.state.active_tab)
@@ -177,7 +148,7 @@ run("g) the open tab is remembered across REAPER restarts", function()
   return W2.state.active_tab == "copy", "copy survived a reload"
 end)
 
-run("h) a stored tab id that no longer exists falls back to the first tab", function()
+run("d) a stored tab id that no longer exists falls back to the first tab", function()
   local W = load_workspace({ active_tab = "bpm" })
   return W.state.active_tab == "rename", "opened " .. tostring(W.state.active_tab)
 end)
@@ -185,7 +156,7 @@ end)
 -- The request has to be CLEARED, not just read: left in place it would drag
 -- the workspace back to that tab on every single frame, and the user could
 -- never switch away from it.
-run("i) an open_tab request is taken over and cleared", function()
+run("e) an open_tab request is taken over and cleared", function()
   local W = load_workspace({ open_tab = "midi" })
   local requested = W.read_open_tab_request()
   if requested ~= "midi" then return false, "read " .. tostring(requested) end
@@ -195,14 +166,14 @@ run("i) an open_tab request is taken over and cleared", function()
   return again == nil, "read once as midi, gone on the next frame"
 end)
 
-run("j) an unknown open_tab request is ignored, and still cleared", function()
+run("f) an unknown open_tab request is ignored, and still cleared", function()
   local W = load_workspace({ open_tab = "nonsense" })
   local requested = W.read_open_tab_request()
   if requested ~= nil then return false, "accepted " .. tostring(requested) end
   return deleted("open_tab"), "ignored and cleared"
 end)
 
-run("k) set_active_tab refuses an id that is not a tab", function()
+run("g) set_active_tab refuses an id that is not a tab", function()
   local W = load_workspace()
   local changed = W.set_active_tab("bpm")
   return changed == false and W.state.active_tab == "rename",
@@ -211,7 +182,7 @@ end)
 
 -- ---------------------------------------------------------------- read-out
 
-run("l) the selection line says where the order came from", function()
+run("h) the selection line says where the order came from", function()
   local W = load_workspace()
   local manager = W.selection_text(3, "manager")
   local arrange = W.selection_text(3, "arrange")

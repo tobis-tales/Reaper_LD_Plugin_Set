@@ -88,8 +88,12 @@ local PANELS = {
 
 local EXT_SECTION = "steelblue_workspace"
 local EXT_ACTIVE_TAB = "active_tab"
-local EXT_UNDOCKED = "undocked"
 local EXT_OPEN_TAB = "open_tab"
+
+-- The 2.0 previews let the user pull the window out and remembered that here.
+-- The window is always docked now, so the entry means nothing -- but it is
+-- written with persist, so it would sit in reaper-extstate.ini forever.
+local EXT_STALE_UNDOCKED = "undocked"
 
 local function ext_get(key)
   if not reaper.GetExtState then
@@ -110,9 +114,9 @@ local function ext_set(key, value, persist)
   end
 end
 
-local function ext_delete(key)
+local function ext_delete(key, persist)
   if reaper.DeleteExtState then
-    reaper.DeleteExtState(EXT_SECTION, key, false)
+    reaper.DeleteExtState(EXT_SECTION, key, persist and true or false)
   end
 end
 
@@ -156,7 +160,6 @@ end
 
 local state = {
   active_tab = TABS[1].id,
-  undocked = false,
 }
 
 local function set_active_tab(id)
@@ -169,21 +172,15 @@ local function set_active_tab(id)
   return true
 end
 
-local function set_undocked(value)
-  value = value and true or false
-  if value == state.undocked then
-    return false
-  end
-
-  state.undocked = value
-  ext_set(EXT_UNDOCKED, value and "1" or "0", true)
-  return true
-end
-
 local function load_state()
   local tab = ext_get(EXT_ACTIVE_TAB)
   state.active_tab = tab_by_id(tab) and tab or TABS[1].id
-  state.undocked = ext_get(EXT_UNDOCKED) == "1"
+
+  -- Nothing reads this any more; clear it so an old preview's choice cannot
+  -- come back if the flag is ever given a meaning again.
+  if ext_get(EXT_STALE_UNDOCKED) ~= "" then
+    ext_delete(EXT_STALE_UNDOCKED, true)
+  end
 end
 
 -- Another script can ask for a tab by writing its id here; the workspace takes
@@ -212,44 +209,17 @@ local DOCK_ID = -1
 
 -- Should this frame ask REAPER for a docker slot?
 --
---   first_frame    true only on the very first frame of this script run
---   is_docked_now  what ImGui_IsWindowDocked reported on the PREVIOUS frame;
---                  nil while nothing has been drawn yet
---   undocked       the remembered "I pulled it out on purpose" choice
---   redock         the "Dock" button was pressed since the last frame
+--   first_frame  true only on the very first frame of this script run
 --
 -- The docker placement is not persistent (probe 2026-09-11: a restarted REAPER
 -- brings the window back floating even though Cond_FirstUseEver was set on
 -- every start), so every run asks again on its first frame.
 --
--- is_docked_now is deliberately NOT retried on: a window reporting "not
--- docked" is either one the user has just dragged out -- Cond_Always would
--- yank it straight back -- or one on a machine where this docker number is
--- wrong, and asking again every frame would pin it down and make it
--- undraggable. One request per run, and the "Dock" button for the rest.
-local function dock_decision(first_frame, is_docked_now, undocked, redock)
-  if redock then
-    return true
-  end
-
-  if undocked then
-    return false
-  end
-
+-- Only the first frame, never again: Cond_Always on every frame would pin the
+-- window down and make it undraggable. Tobi's decision 2026-09-11 -- the
+-- workspace lives in the docker, pulling it out is not a feature.
+local function dock_decision(first_frame)
   return first_frame and true or false
-end
-
--- Has the user just pulled the window out of the docker?
---
--- Only a window that WAS docked can be undocked. On a machine where docking
--- never worked, is_docked_now is false from the first frame on, and reading
--- that as a deliberate choice would silently disable docking forever.
-local function undock_choice(was_docked, is_docked_now, undocked)
-  if undocked then
-    return true
-  end
-
-  return was_docked and is_docked_now == false
 end
 
 -- ---------------------------------------------------------------- selection
@@ -285,9 +255,6 @@ local function run_gui(SB)
   enable_docking(ctx)
 
   local first_frame = true
-  local is_docked = nil        -- what the last frame reported
-  local was_docked = false     -- it has been docked at some point this run
-  local redock = false         -- the "Dock" button, one frame old
 
   -- Reading the Region/Marker Manager means asking JS_ReaScriptAPI to
   -- enumerate windows and walk a list view -- far too heavy for 60 fps. Same
@@ -334,7 +301,7 @@ local function run_gui(SB)
   -- docker decides the width, so placing an item by "available minus my own
   -- width" cannot feed back into the window size the way it does in an
   -- auto-resizing window.
-  local function header_right(ctx_, text, show_dock)
+  local function header_right(ctx_, text)
     local avail = reaper.ImGui_GetContentRegionAvail(ctx_)
     local cursor_x = reaper.ImGui_GetCursorPosX(ctx_)
 
@@ -346,21 +313,8 @@ local function run_gui(SB)
       end
     end
 
-    local dock_w = show_dock and 56 or 0
-    local total = text_w + (show_dock and (dock_w + 12) or 0)
-
     if type(avail) == "number" and type(cursor_x) == "number" then
-      reaper.ImGui_SetCursorPosX(ctx_, cursor_x + math.max(0, avail - total))
-    end
-
-    if show_dock then
-      if SB.button(ctx_, "Dock", dock_w, 0) then
-        -- Both halves matter: clearing the flag makes the window dock again
-        -- on every future start, and redock does it now.
-        set_undocked(false)
-        redock = true
-      end
-      reaper.ImGui_SameLine(ctx_)
+      reaper.ImGui_SetCursorPosX(ctx_, cursor_x + math.max(0, avail - text_w))
     end
 
     reaper.ImGui_AlignTextToFramePadding(ctx_)
@@ -385,16 +339,7 @@ local function run_gui(SB)
       set_active_tab(requested)
     end
 
-    local dock_now = dock_decision(first_frame, is_docked, state.undocked, redock)
-    redock = false
-
-    -- Asking for the docker supersedes what the window did before: without
-    -- this, one frame in which the request has not landed yet would look
-    -- exactly like "the user just dragged it out" and set the flag straight
-    -- back again.
-    if dock_now then
-      was_docked = false
-    end
+    local dock_now = dock_decision(first_frame)
 
     local entries, reason, source = selection()
 
@@ -404,14 +349,10 @@ local function run_gui(SB)
     })
 
     if visible then
-      is_docked = reaper.ImGui_IsWindowDocked and reaper.ImGui_IsWindowDocked(ctx) == true or false
-      set_undocked(undock_choice(was_docked, is_docked, state.undocked))
-      was_docked = was_docked or is_docked
-
       local info = selection_text(#entries, source)
       SB.header_bar(ctx, {
         left = header_left,
-        right = function(c) header_right(c, info, not is_docked) end,
+        right = function(c) header_right(c, info) end,
       })
 
       set_active_tab(SB.tab_bar(ctx, TABS, state.active_tab))
@@ -475,10 +416,8 @@ if TEST_HOOK then
   TEST_HOOK.DOCK_ID = DOCK_ID
   TEST_HOOK.load_state = load_state
   TEST_HOOK.set_active_tab = set_active_tab
-  TEST_HOOK.set_undocked = set_undocked
   TEST_HOOK.read_open_tab_request = read_open_tab_request
   TEST_HOOK.dock_decision = dock_decision
-  TEST_HOOK.undock_choice = undock_choice
   TEST_HOOK.selection_text = selection_text
   return
 end
