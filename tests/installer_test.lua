@@ -228,6 +228,7 @@ check(run("files land in REAPER's Scripts folder", {
     "steelblue_ui.lua", "steelblue_markers.lua",
     "steelblue_boot.lua", "steelblue_matools.lua",
     "steelblue_rename.lua", "steelblue_midi.lua", "steelblue_copy.lua",
+    "steelblue_bpm.lua",
   }
   for _, f in ipairs(want) do
     local h = io.open(dir .. f, "rb")
@@ -242,7 +243,7 @@ check(run("files land in REAPER's Scripts folder", {
       return false, "registered from outside the install dir: " .. e.path
     end
   end
-  return true, "12 files copied, actions point at the copies"
+  return true, "13 files copied, actions point at the copies"
 end))
 
 -- 2026-09-11: an old steelblue_workspace.lua was still lying next to the new
