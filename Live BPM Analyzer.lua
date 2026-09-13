@@ -75,63 +75,286 @@ local pending_estimate = nil
 local pending_envelope_ms = 0
 local pending_estimate_ms = 0
 
-local function get_selected_audio_take()
-  local item = reaper.GetSelectedMediaItem(0, 0)
+-- The item the analyzer is listening to, and what the window says about it.
+-- Kept together because the window must never name a different item than the
+-- one the numbers came from.
+local current_item = nil
+local source_text = nil
+local source_is_timecode = false
 
-  if not item then
-    local play_pos = reaper.GetPlayPosition()
-    if reaper.GetPlayState() & 1 ~= 1 then
-      play_pos = reaper.GetCursorPosition()
-    end
+-- The play cursor while REAPER runs, the edit cursor while it does not.
+local function cursor_position()
+  if reaper.GetPlayState() & 1 == 1 then
+    return reaper.GetPlayPosition()
+  end
 
-    local audio_items = {}
-    local track_count = reaper.CountTracks(0)
+  return reaper.GetCursorPosition()
+end
 
-    for track_index = 0, track_count - 1 do
-      local track = reaper.GetTrack(0, track_index)
-      local item_count = reaper.CountTrackMediaItems(track)
+-- Names that give a timecode track away. An LTC/SMPTE signal is a square wave
+-- with a perfectly regular period: the estimator locks onto it happily and
+-- reports a clean, meaningless tempo. Nothing in the audio itself says "this is
+-- not music", so the name is all there is to go on.
+local TIMECODE_WORDS = { "ltc", "smpte", "timecode", "time code", "mtc" }
+-- "tc" only as a whole word -- "Match" and "etc" are not timecode tracks.
+local TIMECODE_WORD_TC = "%f[%w]tc%f[%W]"
 
-      for item_index = 0, item_count - 1 do
-        local candidate_item = reaper.GetTrackMediaItem(track, item_index)
-        local candidate_take = candidate_item and reaper.GetActiveTake(candidate_item)
+local function looks_like_timecode(...)
+  for index = 1, select("#", ...) do
+    local text = select(index, ...)
 
-        if candidate_take and not reaper.TakeIsMIDI(candidate_take) then
-          local item_start = reaper.GetMediaItemInfo_Value(candidate_item, "D_POSITION")
-          local item_end = item_start + reaper.GetMediaItemInfo_Value(candidate_item, "D_LENGTH")
+    if type(text) == "string" and text ~= "" then
+      local lowered = text:lower()
 
-          if play_pos >= item_start and play_pos <= item_end then
-            item = candidate_item
-            break
-          end
-
-          audio_items[#audio_items + 1] = candidate_item
+      for _, word in ipairs(TIMECODE_WORDS) do
+        if lowered:find(word, 1, true) then
+          return true
         end
       end
 
-      if item then
-        break
+      if lowered:find(TIMECODE_WORD_TC) then
+        return true
+      end
+    end
+  end
+
+  return false
+end
+
+-- Everything the picker and the window need to know about one item. One place,
+-- so the ranking and the "Source" line can never describe different things.
+-- Returns nil for an item without an active take.
+local function describe_item(item, track)
+  local take = item and reaper.GetActiveTake(item)
+  if not take then
+    return nil
+  end
+
+  track = track or reaper.GetMediaItemTrack(item)
+
+  local track_number = 0
+  local track_name = ""
+
+  if track then
+    track_number = math.floor(reaper.GetMediaTrackInfo_Value(track, "IP_TRACKNUMBER") or 0)
+
+    local _, name = reaper.GetTrackName(track)
+    if type(name) == "string" then
+      track_name = name
+    end
+
+    -- REAPER hands back "Track 3" for a track that carries no name at all.
+    -- That is the default label, not a name; repeating it helps nobody.
+    if track_name == string.format("Track %d", track_number) then
+      track_name = ""
+    end
+  end
+
+  local take_name = reaper.GetTakeName(take)
+  if type(take_name) ~= "string" then
+    take_name = ""
+  end
+
+  local _, notes = reaper.GetSetMediaItemInfo_String(item, "P_NOTES", "", false)
+  if type(notes) ~= "string" then
+    notes = ""
+  end
+
+  return {
+    item = item,
+    take = take,
+    track = track,
+    track_number = track_number,
+    track_name = track_name,
+    take_name = take_name,
+    notes = notes,
+  }
+end
+
+-- What the window shows under "Source": Track 2 "Song" \u{00B7} song.wav
+local function source_text_of(item)
+  local described = describe_item(item)
+  if not described then
+    return nil
+  end
+
+  local text = string.format("Track %d", described.track_number)
+
+  if described.track_name ~= "" then
+    text = text .. string.format(" \"%s\"", described.track_name)
+  end
+
+  if described.take_name ~= "" then
+    text = text .. " \u{00B7} " .. described.take_name
+  end
+
+  return text
+end
+
+local function item_is_timecode(item)
+  local described = describe_item(item)
+  if not described then
+    return false
+  end
+
+  return looks_like_timecode(described.track_name, described.take_name, described.notes)
+end
+
+local function item_is_valid(item)
+  if not item then
+    return false
+  end
+
+  if not reaper.ValidatePtr2 then
+    return true
+  end
+
+  return reaper.ValidatePtr2(0, item, "MediaItem*") and true or false
+end
+
+-- Timecode last, then priority, then the order the project lists them in (the
+-- caller walks tracks and items in order, so a strict "<" keeps the first).
+local function outranks(candidate, best)
+  local candidate_timecode = candidate.timecode and 1 or 0
+  local best_timecode = best.timecode and 1 or 0
+
+  if candidate_timecode ~= best_timecode then
+    return candidate_timecode < best_timecode
+  end
+
+  return candidate.priority < best.priority
+end
+
+-- Nothing to analyze. Say which of the three cases it is, in the words the
+-- plugin has always used.
+local function no_candidate_error()
+  local selected = reaper.GetSelectedMediaItem(0, 0)
+
+  if selected then
+    local take = reaper.GetActiveTake(selected)
+
+    if not take then
+      return "Selected item has no active take."
+    end
+
+    if reaper.TakeIsMIDI(take) then
+      return "Selected item is MIDI. Please select the finished audio song item."
+    end
+  end
+
+  return "Select the song item or place the play cursor inside it."
+end
+
+-- Which item the analyzer should listen to. Ranking, not first-come:
+--   1  the item the user selected
+--   2  an item under the cursor on a selected track
+--   3  an item under the cursor
+--   4  the only audio item in the project
+-- A timecode candidate loses against every other candidate whatever its rank --
+-- otherwise an LTC track lying over the whole song wins on track order alone,
+-- which is the bug this function exists for.
+--
+-- `previous` (the item analyzed so far) sticks while it is still valid, still
+-- selected or under the cursor, and not timecode: during playback the cursor
+-- sweeps through items on other tracks, and the analyzer must not change song
+-- behind the user's back. A fresh selection by the user always wins.
+local function pick_audio_item(previous)
+  local cursor = cursor_position()
+  local candidates = {}
+  local audio_total = 0
+  local track_count = reaper.CountTracks(0)
+
+  for track_index = 0, track_count - 1 do
+    local track = reaper.GetTrack(0, track_index)
+    local item_count = track and reaper.CountTrackMediaItems(track) or 0
+
+    for item_index = 0, item_count - 1 do
+      local item = reaper.GetTrackMediaItem(track, item_index)
+      local described = item and describe_item(item, track)
+
+      if described and not reaper.TakeIsMIDI(described.take) then
+        local item_start = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+        local item_end = item_start + reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+
+        described.selected = reaper.GetMediaItemInfo_Value(item, "B_UISEL") ~= 0
+        described.under_cursor = cursor >= item_start and cursor <= item_end
+        described.track_selected = reaper.GetMediaTrackInfo_Value(track, "I_SELECTED") ~= 0
+        described.timecode =
+          looks_like_timecode(described.track_name, described.take_name, described.notes)
+
+        audio_total = audio_total + 1
+        candidates[#candidates + 1] = described
+      end
+    end
+  end
+
+  local best = nil
+  local stay = nil
+
+  for _, candidate in ipairs(candidates) do
+    if candidate.selected then
+      candidate.priority = 1
+    elseif candidate.under_cursor and candidate.track_selected then
+      candidate.priority = 2
+    elseif candidate.under_cursor then
+      candidate.priority = 3
+    elseif audio_total == 1 then
+      candidate.priority = 4
+    end
+
+    if candidate.priority and (not best or outranks(candidate, best)) then
+      best = candidate
+    end
+
+    if previous and candidate.item == previous then
+      stay = candidate
+    end
+  end
+
+  if stay and stay.priority and not stay.timecode
+    and (stay.selected or stay.under_cursor) and item_is_valid(previous) then
+    local overruled = false
+
+    if not stay.selected then
+      for _, candidate in ipairs(candidates) do
+        if candidate.selected and candidate.item ~= previous then
+          overruled = true
+          break
+        end
       end
     end
 
-    if not item and #audio_items == 1 then
-      item = audio_items[1]
+    if not overruled then
+      best = stay
     end
   end
 
-  if not item then
-    return nil, nil, "Select the song item or place the play cursor inside it."
+  if not best then
+    return nil, nil, no_candidate_error()
   end
 
-  local take = reaper.GetActiveTake(item)
-  if not take then
-    return nil, nil, "Selected item has no active take."
+  return best.item, best.take, nil
+end
+
+-- Remember what was picked. A different item means a different song, so
+-- everything the smoothing carries has to go -- a history mixing two songs
+-- shows a tempo neither of them has.
+local function set_current_item(item)
+  if item == current_item then
+    return
   end
 
-  if reaper.TakeIsMIDI(take) then
-    return nil, nil, "Selected item is MIDI. Please select the finished audio song item."
-  end
+  current_item = item
+  source_text = item and source_text_of(item) or nil
+  source_is_timecode = (item and item_is_timecode(item)) or false
 
-  return item, take, nil
+  history = {}
+  current_bpm = nil
+  raw_bpm = nil
+  confidence = 0
+  raw_confidence = 0
+  octave_note = nil
+  pending_estimate = nil
 end
 
 local function clamp(value, min_value, max_value)
@@ -985,18 +1208,29 @@ local function apply_estimate(estimated_bpm, detected_confidence, octave_bpm, oc
     confidence = detected_confidence
   end
 
-  status = "Analyzing selected item while playback runs."
+  if source_is_timecode then
+    -- The numbers are real, the tempo is not: a timecode signal has a period,
+    -- not a beat. Say so where the user is already looking.
+    status = string.format(
+      "Analyzing %s - this looks like a timecode track; select the song item instead.",
+      source_text or "this item"
+    )
+  else
+    status = "Analyzing selected item while playback runs."
+  end
 end
 
 -- The "Analyze now" button: one batch pass over the whole window, answer on the
 -- same frame. It is allowed to be expensive -- the user asked for it once, and
 -- a single stutter on a click is not a stuttering cursor.
 local function analyze_now()
-  local item, take, err = get_selected_audio_take()
+  local item, take, err = pick_audio_item(current_item)
   if err then
     status = err
     return
   end
+
+  set_current_item(item)
 
   local started = reaper.time_precise()
 
@@ -1039,11 +1273,13 @@ end
 -- window, and hands the tempo search to the stepper -- which the frames after
 -- this one work off a few milliseconds at a time.
 local function analyze_live()
-  local item, take, err = get_selected_audio_take()
+  local item, take, err = pick_audio_item(current_item)
   if err then
     status = err
     return
   end
+
+  set_current_item(item)
 
   local started = reaper.time_precise()
 
@@ -1096,11 +1332,13 @@ local function step_live_estimate()
 end
 
 local function precision_analyze()
-  local item, take, err = get_selected_audio_take()
+  local item, take, err = pick_audio_item(current_item)
   if err then
     status = err
     return
   end
+
+  set_current_item(item)
 
   local buffer, sample_count, channel_count, read_err, analyzed_seconds = read_precision_window(item, take)
   if read_err then
@@ -1265,6 +1503,26 @@ if TEST_HOOK then
   TEST_HOOK.tempo_prior = tempo_prior
   TEST_HOOK.decimate_envelope = decimate_envelope
   TEST_HOOK.refine_period = refine_period
+  -- Item picking: which item the analyzer listens to, and what it says about it.
+  TEST_HOOK.pick_audio_item = pick_audio_item
+  TEST_HOOK.looks_like_timecode = looks_like_timecode
+  TEST_HOOK.source_text_of = source_text_of
+  TEST_HOOK.set_current_item = set_current_item
+  TEST_HOOK.apply_estimate = apply_estimate
+  TEST_HOOK.get_display_state = function()
+    return {
+      current_item = current_item,
+      source_text = source_text,
+      source_is_timecode = source_is_timecode,
+      status = status,
+      history = history,
+      current_bpm = current_bpm,
+      raw_bpm = raw_bpm,
+      confidence = confidence,
+      raw_confidence = raw_confidence,
+      octave_note = octave_note,
+    }
+  end
   return
 end
 
@@ -1309,6 +1567,10 @@ local function loop()
     SB.label(ctx, "Raw          " .. (raw_bpm and string.format("%.2f", raw_bpm) or "--.--"))
     SB.label(ctx, string.format("Raw confidence  %.0f%%", raw_confidence * 100))
     SB.label(ctx, string.format("Project tempo   %.2f", reaper.Master_GetTempo()))
+    -- Which item the numbers came from. Without this line the window is silent
+    -- about a wrong pick, which is how a timecode track could be analyzed for
+    -- minutes without anyone noticing.
+    SB.label(ctx, "Source          " .. (source_text or "-"))
 
     reaper.ImGui_Separator(ctx)
     SB.section(ctx, "Range")
