@@ -257,7 +257,8 @@ end
 -- `previous` (the item analyzed so far) sticks while it is still valid, still
 -- selected or under the cursor, and not timecode: during playback the cursor
 -- sweeps through items on other tracks, and the analyzer must not change song
--- behind the user's back. A fresh selection by the user always wins.
+-- behind the user's back. A better-ranked candidate -- a selected item or an
+-- item on a selected track -- is the user's choice and always wins.
 local function pick_audio_item(previous)
   local cursor = cursor_position()
   local candidates = {}
@@ -313,18 +314,10 @@ local function pick_audio_item(previous)
 
   if stay and stay.priority and not stay.timecode
     and (stay.selected or stay.under_cursor) and item_is_valid(previous) then
-    local overruled = false
-
-    if not stay.selected then
-      for _, candidate in ipairs(candidates) do
-        if candidate.selected and candidate.item ~= previous then
-          overruled = true
-          break
-        end
-      end
-    end
-
-    if not overruled then
+    -- A candidate that merely ties (the cursor sweeping another track's item)
+    -- does not move the analyzer; one that RANKS HIGHER is the user's doing --
+    -- a selected item or a selected track -- and wins.
+    if not best or not (best.priority < stay.priority) then
       best = stay
     end
   end
@@ -1509,6 +1502,10 @@ if TEST_HOOK then
   TEST_HOOK.source_text_of = source_text_of
   TEST_HOOK.set_current_item = set_current_item
   TEST_HOOK.apply_estimate = apply_estimate
+  -- A search in flight, so a test can prove an item change throws it away.
+  TEST_HOOK.start_pending_estimate_for_test = function()
+    pending_estimate = { step = function() return false end }
+  end
   TEST_HOOK.get_display_state = function()
     return {
       current_item = current_item,
@@ -1521,6 +1518,7 @@ if TEST_HOOK then
       confidence = confidence,
       raw_confidence = raw_confidence,
       octave_note = octave_note,
+      pending_estimate = pending_estimate,
     }
   end
   return
