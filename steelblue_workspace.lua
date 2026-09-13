@@ -5,9 +5,10 @@
 --
 -- Each tab draws the same panel module its own script draws --
 -- steelblue_rename.lua, steelblue_midi.lua, steelblue_copy.lua -- laid out wide
--- instead of stacked. The BPM analyzer follows in the next step. The four
--- single-script plugins keep working exactly as they do today; nothing here
--- replaces them.
+-- instead of stacked. The BPM analyzer is not a tab: steelblue_bpm.lua draws
+-- its compact block in the header band and everything else into the ">>>"
+-- popup, and it keeps analyzing whichever tab is open. The four single-script
+-- plugins keep working exactly as they do today; nothing here replaces them.
 
 local SCRIPT_TITLE = "steelblue LD Tools"
 
@@ -56,6 +57,11 @@ if not COPY then
   return
 end
 
+local BPM = load_module("steelblue_bpm.lua")
+if not BPM then
+  return
+end
+
 -- One panel each for the whole run, so a half-typed cue name or a pinned
 -- target survives a trip to another tab. The plugin's own title, not the
 -- workspace's: it is what the fallback dialogs and the message boxes say, and
@@ -76,6 +82,22 @@ local panel_copy = COPY.create({
   MARKERS = MARKERS,
   title = "Copy Markers",
 })
+
+-- Not a tab: this one lives in the header band and runs on every frame.
+local panel_bpm = BPM.create({
+  title = "Live BPM Analyzer",
+})
+
+-- The analyzer's test hook, the one the five BPM suites read. "Live BPM
+-- Analyzer.lua" publishes it and then returns -- the suites want the DSP, not a
+-- window. The workspace publishes it and keeps going, so tests/bpm_hosts_test
+-- can watch the panel that is actually on screen.
+local BPM_HOOK = rawget(_G, "BPM_ANALYZER_TEST")
+if BPM_HOOK then
+  for key, value in pairs(panel_bpm.test_hook()) do
+    BPM_HOOK[key] = value
+  end
+end
 
 -- The panel behind each tab id, so the footer and after_frame can ask by id.
 local PANELS = {
@@ -263,26 +285,68 @@ local function run_gui(SB)
     return cached_entries, cached_reason, cached_source
   end
 
-  -- The BPM block is a placeholder in this step: the numbers and all three
-  -- controls arrive when the analyzer moves in. Disabled, so nobody clicks a
-  -- button that does nothing.
-  local function header_left(ctx_)
-    reaper.ImGui_AlignTextToFramePadding(ctx_)
-    reaper.ImGui_TextColored(ctx_, SB.color.text_muted, "LIVE BPM")
-    reaper.ImGui_SameLine(ctx_)
-    reaper.ImGui_TextColored(ctx_, SB.color.text, "--.--")
-    reaper.ImGui_SameLine(ctx_)
-    reaper.ImGui_TextColored(ctx_, SB.color.text_muted, "BPM")
-    reaper.ImGui_SameLine(ctx_)
+  -- The ">>>" popup: open or closed, and where it hangs. `request` is set on
+  -- the frame the button was pressed and OpenPopup is called once for it --
+  -- calling OpenPopup on every frame would hold the popup open and take the
+  -- click-outside close away, which is how a popup is meant to close.
+  local popup_open = false
+  local popup_request = false
+  local popup_anchor_x, popup_anchor_y = nil, nil
 
-    reaper.ImGui_BeginDisabled(ctx_, true)
-    -- "##" hides the label: the switch has no text of its own in the design.
-    reaper.ImGui_Checkbox(ctx_, "##live_bpm", false)
-    reaper.ImGui_SameLine(ctx_)
-    SB.button(ctx_, "Precision analyze", 0, 0)
-    reaper.ImGui_SameLine(ctx_)
-    SB.button(ctx_, "\u{203A}\u{203A}\u{203A}", 0, 0)
-    reaper.ImGui_EndDisabled(ctx_)
+  -- How far below the block's top edge the popup hangs: one row plus a gap.
+  local POPUP_DROP = 28
+  local POPUP_ID = "steelblue_bpm_more"
+
+  -- The analyzer's compact block. steelblue_bpm.lua draws it; the only thing
+  -- left here is the popup it cannot own, because a popup is a window and the
+  -- panel modules do not open windows.
+  local function header_left(ctx_)
+    local x, y = reaper.ImGui_GetCursorScreenPos(ctx_)
+    if type(x) == "number" and type(y) == "number" then
+      popup_anchor_x, popup_anchor_y = x, y
+    end
+
+    if panel_bpm.frame(ctx_, SB, { layout = "compact" }) then
+      if popup_open then
+        popup_open = false
+      else
+        popup_request = true
+      end
+    end
+  end
+
+  -- Drawn right after the header band, so the popup belongs to the window and
+  -- not to whatever the active tab submitted last.
+  local function draw_bpm_popup(ctx_)
+    if popup_request then
+      popup_request = false
+      popup_open = true
+
+      -- Placed only on the frame it opens, and only then: a SetNextWindowPos
+      -- that no Begin consumes stays armed and lands on the next window that
+      -- opens -- which here would be the workspace itself, one frame later.
+      if popup_anchor_x and reaper.ImGui_SetNextWindowPos then
+        reaper.ImGui_SetNextWindowPos(ctx_, popup_anchor_x, popup_anchor_y + POPUP_DROP)
+      end
+
+      reaper.ImGui_OpenPopup(ctx_, POPUP_ID)
+    end
+
+    if not popup_open then
+      return
+    end
+
+    if reaper.ImGui_BeginPopup(ctx_, POPUP_ID) then
+      if panel_bpm.popup(ctx_, SB) then
+        popup_open = false
+        reaper.ImGui_CloseCurrentPopup(ctx_)
+      end
+
+      reaper.ImGui_EndPopup(ctx_)
+    else
+      -- a click outside: ImGui closed it, and the flag has to follow
+      popup_open = false
+    end
   end
 
   -- Right-aligning is allowed here and nowhere else in this package: the
@@ -322,6 +386,10 @@ local function run_gui(SB)
   local REFERENCE_MIN_HEIGHT = 450
 
   local function loop()
+    -- Before the window, on every frame, whatever tab is open: the analyzer is
+    -- a live read-out, and it must not stop because someone is renaming markers.
+    panel_bpm.tick()
+
     local requested = read_open_tab_request()
     if requested then
       set_active_tab(requested)
@@ -342,6 +410,8 @@ local function run_gui(SB)
         left = header_left,
         right = function(c) header_right(c, info) end,
       })
+
+      draw_bpm_popup(ctx)
 
       set_active_tab(SB.tab_bar(ctx, TABS, state.active_tab))
 
@@ -381,11 +451,15 @@ local function run_gui(SB)
       panel.after_frame()
     end
 
+    panel_bpm.after_frame()
+
     first_frame = false
 
     if open then
       reaper.defer(loop)
     else
+      -- the audio accessor is a REAPER resource, not a Lua one
+      panel_bpm.release()
       BOOT.destroy_context(ctx)
     end
   end

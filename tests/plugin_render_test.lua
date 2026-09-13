@@ -129,6 +129,13 @@ local function make_reaper()
             state.tabs = state.tabs + 1
             return true
           end
+          -- A closed popup: OpenPopup is a no-op here and BeginPopup says
+          -- "not open", so the workspace draws its header block and nothing
+          -- behind ">>>". Deliberately false and not nil -- a nil would also
+          -- read as closed, and then a BeginPopup that is not in the dylib at
+          -- all would look like a passing test.
+          if key == "ImGui_BeginPopup" then return false end
+
           -- every button label that was submitted, so a run can be asked
           -- afterwards whether a panel really got drawn
           if key == "ImGui_Button" then state.labels[a] = true return false end
@@ -164,11 +171,14 @@ local plugins = {
 -- One button per tab that only that tab's panel draws. Rendering 30 frames of
 -- the workspace proves nothing about a tab whose BeginTabItem never said
 -- "true" -- these labels are the evidence that all three panels were drawn.
+-- "Precision analyze" is the header band's: the BPM block is not a tab, so it
+-- has to be drawn on every one of the 30 frames.
 local expected_labels = {
   ["steelblue_workspace.lua"] = {
     "Rename selected markers",
     "All MIDI items in the project",
     "Copy to cursor",
+    "Precision analyze",
   },
 }
 

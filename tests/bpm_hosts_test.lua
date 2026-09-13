@@ -9,7 +9,7 @@
 -- live path keeps running behind a tab that is not the analyzer's, that the
 -- switch really stops it, that the ">>>" popup opens and closes, that a button
 -- inside the popup acts, and that the audio accessor is handed back when the
--- window closes. The workspace half of it follows with the header block.
+-- window closes.
 --
 -- Same fake as copy_hosts_test.lua: the ImGui surface is the real dylib's
 -- function list, so a mistyped ImGui_* name is a missing API and not a silent
@@ -295,6 +295,104 @@ do
     check(not again, "g3) the window closes", "")
     check(accessors_destroyed == 1,
       "g4) and release() hands the accessor back", accessors_destroyed .. " destroyed")
+  end
+end
+
+-- ------------------------------------------------------------- workspace
+-- (b) the header block, (c) the popup, (a2) Source in it, (d) a button in it
+
+do
+  BPM_ANALYZER_TEST = {}
+  reaper = build_reaper({ active_tab = "rename" })
+  local ok, err = pcall(dofile, folder .. "steelblue_workspace.lua")
+  if not ok then
+    check(false, "b) the workspace loads", tostring(err))
+  else
+    local T = BPM_ANALYZER_TEST
+
+    frame()
+
+    check(drew("LIVE BPM") and drew("--.--") and drew("Precision analyze") and drew(MORE),
+      "b1) the header band draws the compact block", "")
+    check(not drew("Set project tempo") and not drew("Analyze now") and not drew("Close"),
+      "b2) and nothing that belongs in the popup", "")
+    check(drew("Rename selected markers"),
+      "b3) the rename tab is drawn as before", "")
+
+    click_label = MORE
+    frame()
+    click_label = nil
+    frame()
+
+    check(drew("Set project tempo") and drew("Analyze now") and drew("Half")
+      and drew("Double") and drew("Clear") and drew("Close"),
+      "c1) clicking >>> opens the popup with the rest of the analyzer", "")
+    check(drew_starting_with("Source"),
+      "c2) and the Source line is in there", "")
+    check(drew_starting_with("Last analysis"),
+      "c3) together with what the last pass cost", "")
+    check(drew("Min BPM") and drew("Max BPM") and drew("Window seconds"),
+      "c4) and the range fields", "")
+
+    -- a value to halve, set the way the analyzer would have set it
+    T.apply_estimate(128, 0.9)
+    check(T.get_display_state().current_bpm == 128,
+      "d1) the panel shows a tempo", tostring(T.get_display_state().current_bpm))
+
+    click_label = "Half"
+    frame()
+    click_label = nil
+
+    check(T.get_display_state().current_bpm == 64,
+      "d2) Half in the popup halves it", tostring(T.get_display_state().current_bpm))
+
+    click_label = "Close"
+    frame()
+    click_label = nil
+    frame()
+
+    check(not drew("Set project tempo") and not drew("Close"),
+      "c5) Close shuts the popup again", "")
+    check(drew("Precision analyze") and drew(MORE),
+      "c6) and the header block stays", "")
+  end
+end
+
+-- ------------------------------------------------------------ another tab
+-- (e) the live path runs behind a tab that is not the analyzer's, and
+-- (f) the switch in the header really stops it
+
+do
+  BPM_ANALYZER_TEST = {}
+  reaper = build_reaper({ active_tab = "copy" })
+  local ok, err = pcall(dofile, folder .. "steelblue_workspace.lua")
+  if not ok then
+    check(false, "e) the workspace loads on the copy tab", tostring(err))
+  else
+    local T = BPM_ANALYZER_TEST
+
+    for _ = 1, 5 do frame() end
+
+    check(drew("Copy to cursor"), "e1) the copy tab is the one on screen", "")
+    check(drew("Precision analyze"),
+      "e2) and the BPM block is still in the header", "")
+    check(accessor_reads > 0,
+      "e3) the analyzer kept reading audio behind it", accessor_reads .. " reads")
+
+    -- the switch off: the analysis stops, the read-out does not disappear
+    checkbox_force = { ["##live_bpm"] = false }
+    frame()
+    check(T.get_display_state().live_update == false,
+      "f1) the switch in the header turns the analysis off", "")
+
+    local before = accessor_reads
+    for _ = 1, 5 do frame() end
+
+    check(accessor_reads == before,
+      "f2) and no audio is read any more",
+      before .. " -> " .. accessor_reads .. " reads")
+    check(drew("LIVE BPM") and drew("BPM"),
+      "f3) while the read-out stays on screen", "")
   end
 end
 
