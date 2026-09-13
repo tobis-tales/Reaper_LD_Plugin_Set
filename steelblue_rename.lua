@@ -154,7 +154,7 @@ local REFERENCE_LINES = {
   "Multiple      increments the cue number in timeline order",
   "[Cmd]         TC trigger command, e.g. Top, On, Off. Default is Top",
   "^Sequence^    name of the sequence, only needed once",
-  "Empty field   leaves that element out",
+  "Empty field   leaves that element out. Command is a list, not a field",
   "Example       BeatFx(1)[Top]^BeatFx^",
 }
 
@@ -668,7 +668,10 @@ function M.create(env)
       state.command_name = command_list[chosen + 1]
     end
 
-    SB.label(ctx, "Empty field leaves that element out. MarkerName = the name of the first selected marker.")
+    -- Two lines, not one: this window sizes itself to its widest item, so a
+    -- longer sentence here widens the whole plugin.
+    SB.label(ctx, "Empty field leaves that element out. Command is a list, not a field.")
+    SB.label(ctx, "MarkerName = the name of the first selected marker.")
 
     reaper.ImGui_Separator(ctx)
     SB.section(ctx, "Colour")
