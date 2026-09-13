@@ -180,9 +180,27 @@ run("g) set_active_tab refuses an id that is not a tab", function()
     "stayed on " .. tostring(W.state.active_tab)
 end)
 
+-- Never show a key that is not really bound (AGENTS.md). The installer only
+-- suggests the keys, and REAPER has no way to read back what the user chose
+-- for another script -- so the tabs carry no key at all.
+run("h) no tab carries a shortcut hint", function()
+  local W = load_workspace()
+  for _, tab in ipairs(W.TABS) do
+    if tab.hint ~= nil then
+      return false, tab.id .. " carries hint " .. tostring(tab.hint)
+    end
+    for _, key in ipairs({ "Ctrl+", "Shift+", "\u{2318}" }) do
+      if tab.label:find(key, 1, true) then
+        return false, tab.id .. " has \"" .. key .. "\" in its label: " .. tab.label
+      end
+    end
+  end
+  return true, #W.TABS .. " tabs, no key text"
+end)
+
 -- ---------------------------------------------------------------- read-out
 
-run("h) the selection line says where the order came from", function()
+run("i) the selection line says where the order came from", function()
   local W = load_workspace()
   local manager = W.selection_text(3, "manager")
   local arrange = W.selection_text(3, "arrange")

@@ -122,29 +122,17 @@ end
 
 -- ---------------------------------------------------------------- tabs
 
--- The installer suggests these keys, and they are what the tutorials print --
--- but REAPER has no API to SET a shortcut, so a user may well have picked
--- something else. The hint is a reminder of the suggestion, not a read-out of
--- the actual binding.
-local function is_windows()
-  local name = reaper.GetOS and reaper.GetOS() or ""
-  return type(name) == "string" and name:match("^Win") ~= nil
-end
-
-local function shortcut(letter)
-  if is_windows() then
-    return "Ctrl+Shift+" .. letter
-  end
-
-  return "\u{2318}\u{21E7}" .. letter
-end
-
+-- No shortcut hints on the tabs. The installer only SUGGESTS keys -- REAPER
+-- has no API to set one, and none to read back what a user bound to some other
+-- script either (GetActionShortcutDesc needs a command ID, and the workspace
+-- does not know the single scripts' IDs). A printed key that is not the one
+-- the user actually has is worse than no key at all.
 local TABS = {
-  { id = "rename", label = "Rename selected markers", hint = shortcut("I"),
+  { id = "rename", label = "Rename selected markers",
     plugin = "Rename selected markers" },
-  { id = "midi",   label = "MIDI notes to markers",   hint = shortcut("H"),
+  { id = "midi",   label = "MIDI notes to markers",
     plugin = "MIDI notes to project markers" },
-  { id = "copy",   label = "Copy Markers",            hint = shortcut("K"),
+  { id = "copy",   label = "Copy Markers",
     plugin = "Copy Markers" },
 }
 
