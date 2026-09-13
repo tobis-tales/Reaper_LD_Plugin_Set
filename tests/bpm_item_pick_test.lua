@@ -257,6 +257,19 @@ do
   check("(e) source follows",
     T.get_display_state().source_text == "Track 1 \"Ambience\" \u{00B7} amb.wav",
     tostring(T.get_display_state().source_text))
+
+  -- Selecting a TRACK is the user's doing too: the item under the cursor on
+  -- that track outranks the one the analyzer was on (TT 54 clicks a track head).
+  item_at(1, 1).selected = false
+  item = pick(item_at(1, 1))
+  check("(e) nothing selected -> stays on the track 1 item",
+    item == item_at(1, 1), where(item))
+
+  project.tracks[2].selected = true
+  item = pick(item_at(1, 1))
+  check("(e) the user selects track 2 -> it switches to the song",
+    item == song, where(item))
+  project.tracks[2].selected = false
 end
 
 -- (f) ------------------------------------------------- the only audio item
@@ -332,12 +345,14 @@ do
 
   item_at(1, 1).selected = false
   item_at(2, 1).selected = true
+  T.start_pending_estimate_for_test()
   local item = pick(filled.current_item)
   local cleared = T.get_display_state()
 
   check("(h) switching item -> history empty, BPM gone",
     item == item_at(2, 1) and #cleared.history == 0 and cleared.current_bpm == nil
-      and cleared.raw_bpm == nil and cleared.confidence == 0,
+      and cleared.raw_bpm == nil and cleared.confidence == 0
+      and cleared.pending_estimate == nil,
     string.format("%s, %d entries, bpm %s",
       where(item), #cleared.history, tostring(cleared.current_bpm)))
 end
