@@ -114,7 +114,41 @@ local function fake()
   end
   r.ExecProcess = function(cmd) log[#log + 1] = { kind = "exec", cmd = cmd } return "0\n" end
   r.Main_OnCommand = function(cmd) log[#log + 1] = { kind = "command", cmd = cmd } end
+  -- A real directory listing, like everything else here: a fake that hands back
+  -- the payload it was told about could never show a leftover it did not
+  -- expect. REAPER re-reads the folder when the index is 0 and returns nil past
+  -- the last entry -- both matter to the caller, so both are reproduced.
+  local listings = {}
+  r.EnumerateFiles = function(path, index)
+    if index == 0 then
+      local names = {}
+      local p = io.popen(string.format("ls -1 %q 2>/dev/null", path))
+      for line in p:lines() do names[#names + 1] = line end
+      p:close()
+      listings[path] = names
+    end
+    return (listings[path] or {})[index + 1]
+  end
   return r
+end
+
+-- os.remove really deletes; the log is only so a scenario can also say which
+-- files were NOT touched, which the surviving file alone cannot prove.
+local real_remove = os.remove
+
+local function watch_removals()
+  os.remove = function(path)
+    log[#log + 1] = { kind = "remove", path = path, file = path:match("([^/]+)$") }
+    return real_remove(path)
+  end
+end
+
+local function removed_files(log)
+  local names = {}
+  for _, e in ipairs(log) do
+    if e.kind == "remove" then names[#names + 1] = e.file end
+  end
+  return names
 end
 
 local function run(name, setup, check)
@@ -124,12 +158,26 @@ local function run(name, setup, check)
   scenario.resource_path = (p:read("a") or ""):gsub("%s+$", "")
   p:close()
 
+  -- Files already sitting in the install folder when the installer starts --
+  -- an older release's leftovers, or something the user put there.
+  if setup.already_there then
+    local dir = scenario.resource_path .. "/Scripts/steelblue/"
+    os.execute(string.format("mkdir -p %q", dir))
+    for _, file in ipairs(setup.already_there) do
+      local h = io.open(dir .. file, "wb")
+      h:write("-- left over from an earlier install\n")
+      h:close()
+    end
+  end
+
   answers = setup.answers or {}
   answer_at = 0
   log = {}
   reaper = fake()
+  watch_removals()
 
   local ok, err = pcall(dofile, PKG .. "steelblue_install.lua")
+  os.remove = real_remove
   if not ok then
     print(string.format("  FAIL  %-42s error: %s", name, err))
     return false
@@ -195,6 +243,58 @@ check(run("files land in REAPER's Scripts folder", {
     end
   end
   return true, "12 files copied, actions point at the copies"
+end))
+
+-- 2026-09-11: an old steelblue_workspace.lua was still lying next to the new
+-- modules, REAPER launched it, and the only symptom was "attempt to call a nil
+-- value (field 'begin_dock_window')". The installer owns that folder, so it
+-- clears out what it no longer ships.
+check(run("stale .lua files in the install folder are removed and named", {
+  imgui = true, js = true, answers = { 1, 7 },
+  already_there = { "old_thing.lua", "notes.txt", "steelblue_ui.lua" },
+}, function(log)
+  local dir = scenario.resource_path .. "/Scripts/steelblue/"
+  local gone = removed_files(log)
+
+  if #gone ~= 1 or gone[1] ~= "old_thing.lua" then
+    return false, "os.remove called for: " .. (#gone == 0 and "nothing" or table.concat(gone, ", "))
+  end
+
+  -- and it really is gone, while the two files that stay really stayed
+  if io.open(dir .. "old_thing.lua", "rb") then return false, "old_thing.lua is still there" end
+  for _, keep in ipairs({ "notes.txt", "steelblue_ui.lua" }) do
+    local h = io.open(dir .. keep, "rb")
+    if not h then return false, "deleted " .. keep .. ", which it must not touch" end
+    h:close()
+  end
+
+  -- a file vanishing without a word is exactly the kind of surprise that
+  -- cost the evening this whole thing is about
+  local said = nil
+  for _, e in ipairs(log) do
+    if e.kind == "dialog" and e.text:find("Removed (no longer part of the set):", 1, true) then
+      said = e.text
+    end
+  end
+  if not said then return false, "the summary never mentioned the removal" end
+  if not said:find("old_thing.lua", 1, true) then return false, "the summary did not name the file" end
+
+  return true, "old_thing.lua removed and listed; notes.txt and the payload untouched"
+end))
+
+check(run("nothing is removed when the folder is clean", {
+  imgui = true, js = true, answers = { 1, 7 },
+}, function(log)
+  local gone = removed_files(log)
+  if #gone > 0 then return false, "removed " .. table.concat(gone, ", ") end
+
+  for _, e in ipairs(log) do
+    if e.kind == "dialog" and e.text:find("Removed (no longer part of the set):", 1, true) then
+      return false, "the summary has an empty Removed block"
+    end
+  end
+
+  return true, "nothing deleted, no Removed block in the summary"
 end))
 
 -- the last AddRemoveReaScript must commit

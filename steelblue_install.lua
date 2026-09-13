@@ -381,13 +381,61 @@ end
 
 -- ---------------------------------------------------------------- install
 
--- Returns the folder the plugins were put in, or nil.
+-- Every .lua in the install folder that this version does not ship any more.
+--
+-- 2026-09-11 cost an evening to exactly this: an old steelblue_workspace.lua
+-- was still lying next to the new modules and REAPER kept launching it, with
+-- "attempt to call a nil value (field 'begin_dock_window')" as the only clue.
+-- A file that is no longer part of the set has no business staying behind.
+--
+-- .lua only, and only in this one folder: it is ours, but a user may well have
+-- put a note or a screenshot in it, and deleting that would be rude.
+local function remove_stale_files(target, payload)
+  local removed = {}
+
+  if not reaper.EnumerateFiles then
+    return removed
+  end
+
+  local shipped = {}
+  for _, name in ipairs(payload) do
+    shipped[name:lower()] = true
+  end
+
+  -- Read the whole listing first, delete afterwards. EnumerateFiles walks a
+  -- live directory by index, so removing a file mid-walk skips the next one.
+  local found = {}
+  local index = 0
+  while true do
+    local name = reaper.EnumerateFiles(target, index)
+    if type(name) ~= "string" or name == "" then
+      break
+    end
+    found[#found + 1] = name
+    index = index + 1
+  end
+
+  for _, name in ipairs(found) do
+    local lower = name:lower()
+    if lower:sub(-4) == ".lua" and not shipped[lower] then
+      if os.remove(target .. name) then
+        removed[#removed + 1] = name
+      end
+    end
+  end
+
+  return removed
+end
+
+-- Returns the folder the plugins were put in (or nil), and the names of the
+-- stale files removed from it.
 local function copy_into_reaper()
   local target = install_dir()
 
-  -- already running from inside the install folder? then there is nothing to do
+  -- already running from inside the install folder? then there is nothing to
+  -- do -- and nothing to clean up either: every file here is one of ours
   if folder:lower() == target:lower() then
-    return target
+    return target, {}
   end
 
   reaper.RecursiveCreateDirectory(target, 0)
@@ -420,7 +468,7 @@ local function copy_into_reaper()
     return nil
   end
 
-  return target
+  return target, remove_stale_files(target, payload)
 end
 
 local function register_plugins(target)
@@ -480,7 +528,7 @@ end
 
 -- ---------------------------------------------------------------- report
 
-local function summary(registered, target, restart_needed)
+local function summary(registered, target, restart_needed, removed)
   local lines = { "Installed:", "" }
 
   for _, entry in ipairs(registered) do
@@ -491,6 +539,17 @@ local function summary(registered, target, restart_needed)
   lines[#lines + 1] = ""
   lines[#lines + 1] = "Copied to:"
   lines[#lines + 1] = "   " .. target
+
+  -- Named, not silently deleted: a file disappearing from a folder is the kind
+  -- of thing that should never be a surprise.
+  if removed and #removed > 0 then
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "Removed (no longer part of the set):"
+    for _, name in ipairs(removed) do
+      lines[#lines + 1] = "   " .. name
+    end
+  end
+
   lines[#lines + 1] = ""
   lines[#lines + 1] = "The disk image is no longer needed — you can eject and delete it."
   lines[#lines + 1] = "The plugins are in the Action List under their file names."
@@ -505,7 +564,7 @@ local function summary(registered, target, restart_needed)
     lines[#lines + 1] = "Both extensions are present. You are ready to go."
   else
     if not has_reaimgui() then
-      lines[#lines + 1] = "! ReaImGui is missing — all four plugins need it. Get it via ReaPack (reapack.com)."
+      lines[#lines + 1] = "! ReaImGui is missing — the plugins need it. Get it via ReaPack (reapack.com)."
     end
     if not has_js_api() then
       lines[#lines + 1] = "! js_ReaScriptAPI is missing — Rename selected markers will number cues in plain timeline order without it."
@@ -598,7 +657,7 @@ local function main()
     restart_needed = restart_needed or placed
   end
 
-  local target = copy_into_reaper()
+  local target, removed = copy_into_reaper()
   if not target then
     return
   end
@@ -610,7 +669,7 @@ local function main()
   end
 
   assign_shortcuts(registered)
-  summary(registered, target, restart_needed)
+  summary(registered, target, restart_needed, removed)
 
   if restart_needed then
     offer_quit()
