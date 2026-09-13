@@ -26,6 +26,11 @@ If you build light shows to a timeline, you probably live in REAPER's markers: o
   <img src="Tutorials/img/copy-01a-window.png" alt="Copy Markers" width="46%">
 </div>
 
+## What's new in 1.1.3
+
+- **Live BPM Analyzer** — skips timecode tracks (LTC/SMPTE/MTC by name) and prefers the selected item, then the selected track.
+- **Live BPM Analyzer** — the window now shows which item is analysed.
+
 ## What's new in 1.1.2
 
 - **Rename selected markers** — `-`/`+` buttons next to the cue number field step it down or up by one.
