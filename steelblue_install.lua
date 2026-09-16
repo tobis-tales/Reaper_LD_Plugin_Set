@@ -490,21 +490,26 @@ end
 -- ---------------------------------------------------------------- autostart
 
 -- REAPER reopens its own windows after a restart (Mixer, Media Explorer, ...)
--- but never a ReaScript window. The one documented hook for "run this when
--- REAPER starts" is a script called `__startup.lua` in the resource path's
--- Scripts folder -- two underscores, that exact name, run at launch. Source:
--- The REAPER Blog, "How to use Startup Actions in REAPER" (March 2021). The
--- REAPER binary itself only spells out the EEL twin, "%s/__startup.eel"; the
--- Lua name is nowhere in its strings, which is why this is documented from the
--- outside and not from `strings` like the rest of the API checks.
--- (The URL is in REPORT-v2g-workspace-autostart.md -- writing it here would
--- read as a `reaper.<name>` call to installer_test's API-name check.)
+-- but never a ReaScript window. The hook for "run this when REAPER starts" is a
+-- script in the resource path's Scripts folder, two underscores, that exact
+-- name -- and the name is `__startup.eel`, not `__startup.lua`.
+--
+-- v2g wrote the Lua one, on the strength of a 2021 blog post, and the workspace
+-- did not come back (Tobi, 2026-09-16: ExtState said 1, the file was there, the
+-- command id matched reaper-kb.ini -- nothing ran). The REAPER 7.80 binary
+-- spells out "%s/__startup.eel" twice and the Lua twin nowhere, which is the
+-- evidence that settles it. So the block is EEL2 now, and the cleanup below
+-- takes the old Lua one back out.
 --
 -- That file belongs to the user, not to us: other scripts live there too. So we
 -- own exactly the lines between our two markers and never touch a byte outside
 -- them.
-local STARTUP_BEGIN = "-- steelblue LD Tools: autostart (managed by steelblue_install.lua) -- begin"
-local STARTUP_END = "-- steelblue LD Tools: autostart -- end"
+local STARTUP_BEGIN = "// steelblue LD Tools: autostart (managed by steelblue_install.lua) -- begin"
+local STARTUP_END = "// steelblue LD Tools: autostart -- end"
+
+-- What v2g left behind in __startup.lua. Same two markers, Lua comment syntax.
+local LEGACY_BEGIN = "-- steelblue LD Tools: autostart (managed by steelblue_install.lua) -- begin"
+local LEGACY_END = "-- steelblue LD Tools: autostart -- end"
 
 local WORKSPACE_FILE = "steelblue_workspace.lua"
 
@@ -516,18 +521,29 @@ end
 -- workspace writes "1" while its window is open and "0" when the user closes
 -- it, so quitting REAPER with the window open leaves "1" standing.
 --
+-- EEL2 is not Lua, and the three signatures come from the EEL2 column of the
+-- ReaScript API reference, not from guessing at the Lua ones:
+--   * a string-returning call takes its output buffer as the FIRST argument --
+--     `bool GetExtState(#retval, "section", "key")` -- so the value lands in the
+--     named string `#steelblue_autostart` rather than in a return value;
+--   * `strcmp("str","str2")` is EEL2's string compare and returns 0 on equal,
+--     so the test is `== 0`, not `!= 0`;
+--   * `int NamedCommandLookup("command_name")` and `Main_OnCommand(int, int)`
+--     read like their Lua twins.
+-- Every name we introduce carries the steelblue_ prefix: this file is shared
+-- with whatever else the user runs at startup, and EEL2 variables are global.
+--
 -- NamedCommandLookup returns 0 for an id this REAPER does not know -- after a
 -- reinstall from a different folder, for instance. Then nothing happens, which
 -- is the right amount of noise for a startup script.
 local function autostart_block(command_id, newline)
   return table.concat({
     STARTUP_BEGIN,
-    "do",
-    '  if reaper.GetExtState("steelblue_workspace", "autostart") == "1" then',
-    '    local cmd = reaper.NamedCommandLookup("' .. command_id .. '")',
-    "    if cmd ~= 0 then reaper.Main_OnCommand(cmd, 0) end",
-    "  end",
-    "end",
+    'GetExtState(#steelblue_autostart, "steelblue_workspace", "autostart");',
+    'strcmp(#steelblue_autostart, "1") == 0 ? (',
+    '  steelblue_cmd = NamedCommandLookup("' .. command_id .. '");',
+    "  steelblue_cmd != 0 ? Main_OnCommand(steelblue_cmd, 0);",
+    ");",
     STARTUP_END,
   }, newline)
 end
@@ -537,7 +553,7 @@ end
 -- own block already in it (replace just that stretch). A second install must
 -- not stack a second copy of the block on top of the first.
 local function write_autostart(command_id)
-  local path = startup_dir() .. "__startup.lua"
+  local path = startup_dir() .. "__startup.eel"
 
   local existing
   local handle = io.open(path, "rb")
@@ -578,6 +594,59 @@ local function write_autostart(command_id)
   return true
 end
 
+-- v2g's block sat in __startup.lua, which REAPER never runs. Leaving it there
+-- would be dead code in a file the user opens by hand, so take it out again --
+-- our stretch and the blank line we put in front of it, nothing else. If that
+-- was the whole file, the file goes too: we created it, and an empty
+-- __startup.lua is just litter.
+local function remove_legacy_autostart()
+  local path = startup_dir() .. "__startup.lua"
+
+  local handle = io.open(path, "rb")
+  if not handle then
+    return false
+  end
+  local existing = handle:read("a")
+  handle:close()
+
+  local begin_at = existing:find(LEGACY_BEGIN, 1, true)
+  local _, end_at = existing:find(LEGACY_END, 1, true)
+  if not (begin_at and end_at and end_at > begin_at) then
+    return false
+  end
+
+  local head = existing:sub(1, begin_at - 1)
+  local tail = existing:sub(end_at + 1)
+
+  -- Undo the two newlines we added when appending: the blank line before the
+  -- block, and the one that terminated its last line. Without both, a foreign
+  -- file comes back one newline longer than it went in.
+  if head:sub(-4) == "\r\n\r\n" then
+    head = head:sub(1, -3)
+  elseif head:sub(-2) == "\n\n" then
+    head = head:sub(1, -2)
+  end
+  if tail:sub(1, 2) == "\r\n" then
+    tail = tail:sub(3)
+  elseif tail:sub(1, 1) == "\n" then
+    tail = tail:sub(2)
+  end
+
+  local out = head .. tail
+  if out:match("^%s*$") then
+    os.remove(path)
+    return true
+  end
+
+  local target = io.open(path, "wb")
+  if not target then
+    return false
+  end
+  target:write(out)
+  target:close()
+  return true
+end
+
 -- The workspace's command ID as a startup script can name it. AddRemoveReaScript
 -- hands back a number that is only valid in this session; ReverseNamedCommandLookup
 -- turns it into the "_RS…" string that survives a restart.
@@ -587,6 +656,10 @@ end
 -- either end. No id, no block: a startup file that calls Main_OnCommand(0) would
 -- be worse than no autostart at all.
 local function setup_autostart(registered)
+  -- First, and no matter what happens after it: the stale Lua block is wrong
+  -- even in the cases where we cannot write a new one.
+  remove_legacy_autostart()
+
   local entry
   for _, candidate in ipairs(registered) do
     if candidate.plugin.file == WORKSPACE_FILE then

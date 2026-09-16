@@ -68,8 +68,26 @@ local scenario
 local WORKSPACE_COMMAND_ID = "_RS1234abcd"
 local WORKSPACE_REVERSE_ID = "RS1234abcd"
 
-local STARTUP_BEGIN = "-- steelblue LD Tools: autostart (managed by steelblue_install.lua) -- begin"
-local STARTUP_END = "-- steelblue LD Tools: autostart -- end"
+local STARTUP_BEGIN = "// steelblue LD Tools: autostart (managed by steelblue_install.lua) -- begin"
+local STARTUP_END = "// steelblue LD Tools: autostart -- end"
+
+-- The markers and the exact block v2g wrote into __startup.lua. Spelled out
+-- here rather than asked of the installer: the installer does not write this
+-- shape any more, and a cleanup test that builds its own input from the code it
+-- is testing proves nothing.
+local LEGACY_BEGIN = "-- steelblue LD Tools: autostart (managed by steelblue_install.lua) -- begin"
+local LEGACY_END = "-- steelblue LD Tools: autostart -- end"
+
+local LEGACY_BLOCK = table.concat({
+  LEGACY_BEGIN,
+  "do",
+  '  if reaper.GetExtState("steelblue_workspace", "autostart") == "1" then',
+  '    local cmd = reaper.NamedCommandLookup("' .. WORKSPACE_COMMAND_ID .. '")',
+  "    if cmd ~= 0 then reaper.Main_OnCommand(cmd, 0) end",
+  "  end",
+  "end",
+  LEGACY_END,
+}, "\n")
 
 local function next_answer()
   answer_at = answer_at + 1
@@ -198,8 +216,18 @@ local function run(name, setup, check)
   if setup.startup_before then
     local dir = scenario.resource_path .. "/Scripts/"
     os.execute(string.format("mkdir -p %q", dir))
-    local h = io.open(dir .. "__startup.lua", "wb")
+    local h = io.open(dir .. "__startup.eel", "wb")
     h:write(setup.startup_before)
+    h:close()
+  end
+
+  -- What v2g left on this machine: a block in the Lua startup file REAPER never
+  -- runs.
+  if setup.legacy_before then
+    local dir = scenario.resource_path .. "/Scripts/"
+    os.execute(string.format("mkdir -p %q", dir))
+    local h = io.open(dir .. "__startup.lua", "wb")
+    h:write(setup.legacy_before)
     h:close()
   end
 
@@ -228,8 +256,8 @@ local function count(log, kind)
 end
 
 -- The startup file as it stands on disk right now, or nil if there is none.
-local function startup_text()
-  local h = io.open(scenario.resource_path .. "/Scripts/__startup.lua", "rb")
+local function read_startup(name)
+  local h = io.open(scenario.resource_path .. "/Scripts/" .. name, "rb")
   if not h then
     return nil
   end
@@ -237,6 +265,9 @@ local function startup_text()
   h:close()
   return data
 end
+
+local function startup_text() return read_startup("__startup.eel") end
+local function legacy_text() return read_startup("__startup.lua") end
 
 local function occurrences(haystack, needle)
   local n, at = 0, 1
@@ -365,14 +396,18 @@ end))
 
 -- Tobi, 2026-09-16: "steelblue workspace bleibt nach Restart von REAPER nicht
 -- aktiv." REAPER restores its own windows and never a ReaScript one, so the
--- installer leaves a marked block in <resource>/Scripts/__startup.lua that runs
+-- installer leaves a marked block in <resource>/Scripts/__startup.eel that runs
 -- the workspace action again -- but only if the workspace said it was open.
+--
+-- .eel, not .lua: v2g wrote the Lua file on the strength of a blog post and
+-- nothing ran. REAPER 7.80's binary contains "%s/__startup.eel" and no Lua
+-- twin.
 
-check(run("a) no __startup.lua yet: one is written with both markers", {
+check(run("a) no __startup.eel yet: one is written with both markers", {
   imgui = true, js = true, answers = { 1, 7 },
 }, function(log)
   local text = startup_text()
-  if not text then return false, "no __startup.lua was written" end
+  if not text then return false, "no __startup.eel was written" end
   if not text:find(STARTUP_BEGIN, 1, true) then return false, "no begin marker" end
   if not text:find(STARTUP_END, 1, true) then return false, "no end marker" end
   if not text:find(WORKSPACE_COMMAND_ID, 1, true) then
@@ -388,9 +423,9 @@ end))
 
 -- Somebody else's startup script is the normal case, not the exception: this
 -- file is where every REAPER user parks their own launch code.
-local FOREIGN = 'reaper.ShowConsoleMsg("hello from my own startup\\n")\nlocal x = 1\n'
+local FOREIGN = 'ShowConsoleMsg("hello from my own startup\\n");\nsomebody_else = 1;\n'
 
-check(run("b) a foreign __startup.lua keeps its bytes, block goes behind", {
+check(run("b) a foreign __startup.eel keeps its bytes, block goes behind", {
   imgui = true, js = true, answers = { 1, 7 }, startup_before = FOREIGN,
 }, function()
   local text = startup_text()
@@ -439,50 +474,121 @@ check(run("d) no ReverseNamedCommandLookup: no file, and the summary says so", {
 end))
 
 -- A startup script that does not compile takes every other startup script down
--- with it, so the block has to be real Lua -- and it has to do nothing at all
--- unless the workspace asked for it.
-check(run("e) the block is valid Lua and only fires on autostart=1", {
+-- with it. v2g could prove that by running the block through `load()`; EEL2 has
+-- no interpreter here, so this reads the block instead. Four things, each of
+-- which has been wrong in a hand-written EEL block before:
+--   * the three API calls are spelled the way the EEL2 column of the ReaScript
+--     reference spells them, and the names really exist in the REAPER binary;
+--   * no line starts with "--" (that is a Lua comment; in EEL2 it is a minus
+--     sign followed by a minus sign, i.e. a syntax error);
+--   * the parentheses balance -- the `cond ? ( ... );` block is the one place
+--     that is easy to leave open;
+--   * every statement ends in ";". A line may end in "(" instead, which opens
+--     such a block; the last code line may not.
+check(run("e) the block is EEL2, not Lua, and guards on autostart", {
   imgui = true, js = true, answers = { 1, 7 },
 }, function()
   local text = startup_text()
-  if not text then return false, "no __startup.lua was written" end
+  if not text then return false, "no __startup.eel was written" end
 
-  local chunk, err = load(text, "__startup.lua")
-  if not chunk then return false, "does not compile: " .. tostring(err) end
+  local begin_at = text:find(STARTUP_BEGIN, 1, true)
+  local _, end_at = text:find(STARTUP_END, 1, true)
+  if not (begin_at and end_at) then return false, "no block to look at" end
+  local block = text:sub(begin_at, end_at)
 
-  local real_reaper = reaper
-  local ran
-  local function play(autostart)
-    ran = {}
-    reaper = {
-      GetExtState = function(section, key)
-        ran[#ran + 1] = "get " .. section .. "/" .. key
-        return autostart
-      end,
-      NamedCommandLookup = function(id)
-        ran[#ran + 1] = "lookup " .. id
-        return id == WORKSPACE_COMMAND_ID and 40999 or 0
-      end,
-      Main_OnCommand = function(cmd) ran[#ran + 1] = "run " .. tostring(cmd) end,
-    }
-    local ok, e = pcall(chunk)
-    reaper = real_reaper
-    return ok, e, table.concat(ran, ", ")
+  -- The three calls, literally, in the EEL2 spelling. GetExtState takes its
+  -- output buffer FIRST in EEL2 -- that is the whole reason this block cannot
+  -- be a transliteration of the Lua one.
+  local wanted = {
+    'GetExtState(#steelblue_autostart, "steelblue_workspace", "autostart")',
+    'NamedCommandLookup("' .. WORKSPACE_COMMAND_ID .. '")',
+    "Main_OnCommand(steelblue_cmd, 0)",
+  }
+  for _, call in ipairs(wanted) do
+    if not block:find(call, 1, true) then
+      return false, "the block never calls " .. call
+    end
   end
 
-  local ok, e, trace = play("1")
-  if not ok then return false, "threw on autostart=1: " .. tostring(e) end
-  if not trace:find("run 40999", 1, true) then
-    return false, "autostart=1 did not run the action: " .. trace
+  -- A name that is not in the binary is a typo nobody would see until REAPER
+  -- silently skipped the startup file on a stranger's machine.
+  for _, name in ipairs({ "GetExtState", "NamedCommandLookup", "Main_OnCommand" }) do
+    local p = io.popen(string.format("strings %q | grep -cx -- %q", REAPER_BIN, name))
+    local hits = tonumber(p:read("a")) or 0
+    p:close()
+    if hits == 0 then return false, name .. " is not in the REAPER binary" end
   end
 
-  local ok0, e0, trace0 = play("0")
-  if not ok0 then return false, "threw on autostart=0: " .. tostring(e0) end
-  if trace0:find("run ", 1, true) then
-    return false, "autostart=0 ran something anyway: " .. trace0
+  local depth, last_code = 0, nil
+  for line in (block .. "\n"):gmatch("([^\n]*)\n") do
+    local trimmed = line:gsub("\r$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if trimmed:sub(1, 2) == "--" then
+      return false, "a Lua comment in an EEL file: " .. trimmed
+    end
+    if trimmed ~= "" and trimmed:sub(1, 2) ~= "//" then
+      last_code = trimmed
+      local tail = trimmed:sub(-1)
+      if tail ~= ";" and tail ~= "(" then
+        return false, "statement does not end in ';': " .. trimmed
+      end
+      for c in trimmed:gmatch("[()]") do
+        depth = depth + (c == "(" and 1 or -1)
+        if depth < 0 then return false, "a ')' with nothing open: " .. trimmed end
+      end
+    end
   end
 
-  return true, "compiles; '1' runs 40999, '0' runs nothing"
+  if depth ~= 0 then return false, depth .. " parenthesis/es left open" end
+  if not last_code or last_code:sub(-1) ~= ";" then
+    return false, "the block's last statement does not end in ';'"
+  end
+
+  -- The action must sit inside the strcmp guard, not next to it: an unguarded
+  -- Main_OnCommand would reopen the workspace Tobi closed on purpose.
+  local guard_at = block:find('strcmp(#steelblue_autostart, "1") == 0 ?', 1, true)
+  local action_at = block:find("Main_OnCommand", 1, true)
+  if not guard_at or not action_at or action_at < guard_at then
+    return false, "Main_OnCommand is not behind the autostart guard"
+  end
+
+  return true, "EEL2 spelling, balanced, guarded on autostart"
+end))
+
+-- --- the file v2g wrote, and REAPER never ran -------------------------------
+
+local LEGACY_FOREIGN = 'reaper.ShowConsoleMsg("my own startup\\n")\nlocal x = 1\n'
+
+check(run("f) the old Lua block goes, the foreign lines stay byte for byte", {
+  imgui = true, js = true, answers = { 1, 7 },
+  legacy_before = LEGACY_FOREIGN .. "\n" .. LEGACY_BLOCK .. "\n",
+}, function()
+  local text = legacy_text()
+  if not text then return false, "__startup.lua was deleted although it had foreign lines in it" end
+  if text:find(LEGACY_BEGIN, 1, true) or text:find(LEGACY_END, 1, true) then
+    return false, "our old block is still in __startup.lua"
+  end
+  if text ~= LEGACY_FOREIGN then
+    return false, "the foreign lines came back changed: " .. string.format("%q", text)
+  end
+  return true, "block removed, foreign lines byte-identical"
+end))
+
+check(run("g) __startup.lua with nothing but our block is deleted", {
+  imgui = true, js = true, answers = { 1, 7 },
+  legacy_before = LEGACY_BLOCK .. "\n",
+}, function(log)
+  if legacy_text() then
+    return false, "an empty __startup.lua was left behind: " .. string.format("%q", legacy_text())
+  end
+  local gone = removed_files(log)
+  local named = false
+  for _, name in ipairs(gone) do
+    if name == "__startup.lua" then named = true end
+  end
+  if not named then
+    return false, "the file is gone but os.remove was never called for it"
+  end
+  return true, "file removed"
 end))
 
 -- the last AddRemoveReaScript must commit
