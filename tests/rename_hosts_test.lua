@@ -38,7 +38,8 @@ local BASE_PROJECT = {
 }
 
 local PROJECT, ext_state, deferred, footer_text, labels, texts, click_label, clock,
-  selection_polls, marker_writes, popups_open, current_popup, window_pos_calls
+  selection_polls, marker_writes, popups_open, current_popup, window_pos_calls,
+  opened_this_frame
 
 -- The window height the fake reports. 500 px is Tobi's usual docker; (g) turns
 -- it down to 400, which is where the legend used to be dropped.
@@ -62,6 +63,26 @@ local function count_label(label)
   local seen = 0
   for _, value in ipairs(labels) do
     if value == label then seen = seen + 1 end
+  end
+  return seen
+end
+
+-- Where a button stands in the order the frame submitted them. The workspace
+-- draws the header band, then the popups, then the tab body -- so a "Close"
+-- BEFORE "Rename selected markers" can only have come from the host, and one
+-- after it can only have come from the panel. That ordering is the whole
+-- difference (h) is about; a label counter alone cannot see it.
+local function label_index(label)
+  for index, value in ipairs(labels) do
+    if value == label then return index end
+  end
+  return nil
+end
+
+local function count_opened(id)
+  local seen = 0
+  for _, value in ipairs(opened_this_frame) do
+    if value == id then seen = seen + 1 end
   end
   return seen
 end
@@ -91,6 +112,7 @@ local function build_reaper(initial_ext)
   labels, texts = {}, {}
   popups_open, current_popup = {}, nil
   window_pos_calls = {}
+  opened_this_frame = {}
   clock = 0
   selection_polls = 0
   marker_writes = 0
@@ -185,7 +207,15 @@ local function build_reaper(initial_ext)
         -- A popup is open only once OpenPopup has been called for its id, and
         -- it stays open until something closes it -- exactly the handshake the
         -- "Legend" button depends on.
-        if key == "ImGui_OpenPopup" then popups_open[a2] = true return nil end
+        -- Every OpenPopup of the frame, in order. WHICH frame a popup is
+        -- opened in is what tells the two owners apart in the workspace: the
+        -- panel is drawn after the popups, so a panel that opened the legend
+        -- itself would do it on the click frame, and the host one frame later.
+        if key == "ImGui_OpenPopup" then
+          opened_this_frame[#opened_this_frame + 1] = a2
+          popups_open[a2] = true
+          return nil
+        end
         if key == "ImGui_BeginPopup" then
           if popups_open[a2] then current_popup = a2 return true end
           return false
@@ -256,6 +286,7 @@ end
 
 local function frame()
   labels, texts = {}, {}
+  opened_this_frame = {}
   selection_polls = 0
   marker_writes = 0
   local ok, err = pcall(deferred)
@@ -496,6 +527,85 @@ do
       "g2) and the legend is reachable there", "")
   end
   window_h = 500
+end
+
+-- Who opens the legend in the workspace. Docked into a REAPER docker the popup
+-- the PANEL opened landed at the top of the screen while the analyzer's ">>>"
+-- popup, which the HOST opens, sat under its button (Tobi, 2026-09-16). So the
+-- legend is built like the working one, and these checks are about the build,
+-- not about the look: the panel submits no popup at all any more, and the host
+-- submits it in the same place the ">>>" one is submitted -- after the header
+-- band, before the tab bar.
+do
+  reaper = capture_footer(build_reaper({ active_tab = "rename" }))
+  local ok, err = pcall(dofile, folder .. "steelblue_workspace.lua")
+  if not ok then
+    check(false, "h) the workspace loads for the host-owned legend test", tostring(err))
+  else
+    frame()
+
+    -- the click frame: the button leaves a request behind and nothing else
+    click_label = "Legend"
+    frame()
+    click_label = nil
+
+    check(count_opened("steelblue_rename_legend") == 0,
+      "h1) the panel opens no popup of its own on the click frame",
+      count_opened("steelblue_rename_legend") .. " OpenPopup calls")
+    check(not drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
+      "h1b) and draws no legend on it either", #texts .. " texts")
+
+    -- the next frame: the host collects the request and draws the popup
+    frame()
+
+    check(count_opened("steelblue_rename_legend") == 1,
+      "h2) the host opens it exactly once, one frame later",
+      count_opened("steelblue_rename_legend") .. " OpenPopup calls")
+    check(drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
+      "h2b) and the legend is on screen", "")
+
+    local close_at = label_index("Close")
+    local panel_at = label_index("Rename selected markers")
+    check(close_at and panel_at and close_at < panel_at,
+      "h3) the popup is drawn by the host, before the tab body",
+      "Close at " .. tostring(close_at) .. ", panel at " .. tostring(panel_at))
+
+    local call = window_pos_calls[1]
+    check(#window_pos_calls == 1 and call and call.x == 100 and call.y == 127,
+      "h4) SetNextWindowPos once, under the button (100, 100 + 23 + 4)",
+      #window_pos_calls .. " calls, x=" .. tostring(call and call.x) .. " y=" .. tostring(call and call.y))
+
+    -- the request must be spent, not repeated: a host that is handed it again
+    -- on every frame reopens the popup on every frame, and a popup that is
+    -- reopened cannot be closed by clicking outside it
+    frame()
+    frame()
+    check(count_opened("steelblue_rename_legend") == 0 and #window_pos_calls == 1,
+      "h5) two frames later it is still open, and opened no second time",
+      count_opened("steelblue_rename_legend") .. " OpenPopup calls, "
+        .. #window_pos_calls .. " position calls")
+    check(drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
+      "h5b) and it is still on screen", "")
+
+    -- Close, then a second click: the request is taken once per click, not
+    -- once per run
+    click_label = "Close"
+    frame()
+    click_label = nil
+    frame()
+    check(not drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
+      "h6) Close closes the host's popup", #texts .. " texts")
+
+    click_label = "Legend"
+    frame()
+    click_label = nil
+    frame()
+    check(drew_text_containing("BeatFx(1)[Top]^BeatFx^") and #window_pos_calls == 2,
+      "h7) a second click opens it again, anchored again",
+      #window_pos_calls .. " position calls")
+    check(marker(2).name == "verse", "h8) and nothing was renamed on the way",
+      marker(2).name)
+  end
 end
 
 print(fails == 0 and "\nALL PASS" or ("\nFAILURES: " .. fails))
