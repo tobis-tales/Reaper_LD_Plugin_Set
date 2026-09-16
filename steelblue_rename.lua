@@ -152,7 +152,7 @@ local REFERENCE_LINES = {
   "Cue name      name of the cue",
   "(CueNumber)   cue number, for triggering the same cue repeatedly",
   "Multiple      increments the cue number in timeline order",
-  "[Cmd]         TC trigger command, e.g. Top, On, Off. Default is Top",
+  "[Cmd]         TC trigger command: Go, Top or Flash. Default is Top",
   "^Sequence^    name of the sequence, only needed once",
   "Empty field   leaves that element out. Command is a list, not a field",
   "Example       BeatFx(1)[Top]^BeatFx^",
