@@ -18,18 +18,38 @@
 -- tab. The logic must not be copied into a second place, because a copy is a
 -- thing that rots (AGENTS.md, 2026-07-15).
 --
--- What belongs here: the target fields and their follow rule, the copy, the
--- selection poll, the pending queue, the plain-dialog fallback.
+-- What belongs here: the target fields and their follow rule, the marker list
+-- with its tick boxes, the copy, the selection poll, the pending queue, the
+-- plain-dialog fallback.
 -- What does NOT belong here: the window and the footer. The panel hands its
 -- status line back with status() so the host can put it where its own layout
 -- wants it.
+--
+-- Why the tick list exists (Tobi, 2026-09-15): the Region/Marker Manager drops
+-- its selection the moment another marker is clicked, so "select, then look at
+-- something else, then copy" was impossible. The ticks are the panel's own
+-- memory of what to copy; the manager selection only seeds them.
 
 local M = {}
 
-M.VERSION = "1.0"
+M.VERSION = "1.1"
+
+-- Width of the position column in the marker list, so the names line up under
+-- each other instead of after the longest timestamp.
+local POSITION_WIDTH = 80
 
 local function trim(value)
   return (value or ""):match("^%s*(.-)%s*$")
+end
+
+-- A tick belongs to a MARKER, not to a row number: the GUID survives renaming
+-- and moving, so the ticks do too. Below REAPER 7.72 there is no GUID to have,
+-- and the displayed ID is the best key available.
+local function entry_key(entry)
+  if entry.guid and entry.guid ~= "" then
+    return entry.guid
+  end
+  return "id:" .. tostring(entry.id)
 end
 
 local function parse_target_position(input)
@@ -162,9 +182,12 @@ function M.create(env)
   local status_message = "Ready."
   local status_kind = nil
 
+  -- `entries` here is what the user TICKED, never the manager selection
+  -- directly. In follow mode the two are the same set, which is why the older
+  -- copy suites keep passing unchanged.
   local function run_copy(entries, target_pos)
     if #entries == 0 then
-      status_message = "No markers selected."
+      status_message = "Tick the markers to copy."
       status_kind = "warning"
       return
     end
@@ -210,6 +233,109 @@ function M.create(env)
     return cached_entries, cached_reason, cached_source
   end
 
+  -- ------------------------------------------------------------ marker list
+
+  -- Every marker in the project, in timeline order, one row each. Re-read on
+  -- the same 150 ms beat as the selection: markers_by_id() is an enumeration
+  -- over the whole project, which is cheap enough a few times a second even
+  -- with several hundred markers (measured in tests/copy_pick_test.lua), and
+  -- far too expensive at 60 fps.
+  local rows = {}
+  local row_by_key = {}
+  local last_list_poll = -1
+
+  -- Which markers are ticked, keyed by entry_key.
+  --
+  --   "follow"  the ticks mirror the manager selection on every frame. This is
+  --             the start state, and it makes the panel behave exactly as it
+  --             did before the list existed.
+  --   "manual"  the first click on a tick box switches here, and from then on
+  --             the ticks stay put no matter what the manager does. That is
+  --             the whole point: clicking another marker in the manager must
+  --             not throw away what was already picked.
+  local ticked = {}
+  local tick_mode = "follow"
+
+  local function read_rows()
+    local entries = {}
+    for _, entry in pairs(MARKERS.markers_by_id()) do
+      entries[#entries + 1] = entry
+    end
+    entries = MARKERS.sorted_by_position(entries)
+
+    -- Both of these are resolved once per READ, not once per frame per row:
+    -- lane_name() re-probes lanes_available() on every call, and formatting a
+    -- position is a REAPER round-trip. 600 rows at 60 fps would be 72000 of
+    -- them a second for text that only changes when the project does.
+    local lane_names = {}
+    local new_rows, by_key = {}, {}
+
+    for _, entry in ipairs(entries) do
+      local lane_label = nil
+      if entry.lane then
+        if lane_names[entry.lane] == nil then
+          lane_names[entry.lane] = MARKERS.lane_name(entry.lane) or ""
+        end
+        if lane_names[entry.lane] ~= "" then
+          lane_label = lane_names[entry.lane]
+        end
+      end
+
+      local key = entry_key(entry)
+      local row = {
+        key = key,
+        entry = entry,
+        position = reaper.format_timestr_pos(entry.pos, "", 2),
+        name = entry.name,
+        lane = lane_label,
+      }
+
+      new_rows[#new_rows + 1] = row
+      by_key[key] = row
+    end
+
+    rows, row_by_key = new_rows, by_key
+
+    -- A marker that is no longer in the project cannot be copied, so its tick
+    -- goes with it -- otherwise "3 ticked" would count markers nobody can see.
+    for key in pairs(ticked) do
+      if not row_by_key[key] then
+        ticked[key] = nil
+      end
+    end
+  end
+
+  local function refresh_list()
+    local now = reaper.time_precise()
+    if now - last_list_poll >= POLL_INTERVAL then
+      last_list_poll = now
+      read_rows()
+    end
+  end
+
+  -- Ticks := the manager selection. Only markers that actually have a row can
+  -- be ticked, so the counter never promises more than the list shows.
+  local function follow_selection(entries)
+    ticked = {}
+    for _, entry in ipairs(entries or {}) do
+      local key = entry_key(entry)
+      if row_by_key[key] then
+        ticked[key] = true
+      end
+    end
+  end
+
+  -- In list order, which is timeline order.
+  local function picked_entries()
+    local picked = {}
+    for _, row in ipairs(rows) do
+      if ticked[row.key] then
+        picked[#picked + 1] = row.entry
+      end
+    end
+    return picked
+  end
+
   local function draw_selection(ctx, SB, entries, reason, source)
     SB.section(ctx, "Selection")
 
@@ -242,27 +368,89 @@ function M.create(env)
     reaper.ImGui_PopItemWidth(ctx)
   end
 
-  local function draw_buttons(ctx, SB, entries)
-    if SB.primary_button(ctx, "Copy to cursor", 200) then
-      pending = function() run_copy(entries, reaper.GetCursorPosition()) end
-    end
+  -- One row per marker: tick box, position, name, ruler lane. The tick box
+  -- carries an empty "##" label so the text next to it can be laid out in
+  -- columns instead of running after a checkbox-shaped label.
+  local function draw_rows(ctx, SB)
+    for _, row in ipairs(rows) do
+      local changed, value = reaper.ImGui_Checkbox(ctx, "##pick_" .. row.key, ticked[row.key] == true)
+      if changed then
+        -- the first click is the moment the user takes over from the manager
+        tick_mode = "manual"
+        ticked[row.key] = value and true or nil
+      end
 
-    reaper.ImGui_SameLine(ctx)
+      reaper.ImGui_SameLine(ctx)
+      local column_x = reaper.ImGui_GetCursorPosX(ctx)
+      reaper.ImGui_AlignTextToFramePadding(ctx)
+      SB.label(ctx, row.position)
 
-    if SB.button(ctx, "Copy to measure.beats", 200) then
-      local target = parse_target_position(measure_input)
-      pending = function() run_copy(entries, target) end
-    end
+      reaper.ImGui_SameLine(ctx)
+      if type(column_x) == "number" then
+        reaper.ImGui_SetCursorPosX(ctx, column_x + POSITION_WIDTH)
+      end
+      SB.label(ctx, row.name)
 
-    reaper.ImGui_SameLine(ctx)
-
-    if SB.button(ctx, "Copy to hh:mm:ss:ff", 200) then
-      local target = parse_target_position(timecode_input)
-      pending = function() run_copy(entries, target) end
+      if row.lane then
+        reaper.ImGui_SameLine(ctx)
+        reaper.ImGui_TextColored(ctx, SB.color.text_muted, row.lane)
+      end
     end
   end
 
-  -- Sections stacked, the way the single window has always had them.
+  -- "Use selection" also goes back to follow mode; "None" cannot, or the very
+  -- next frame would hand the ticks straight back from the manager.
+  local function draw_pick_controls(ctx, SB, entries)
+    if SB.button(ctx, "Use selection", 140) then
+      tick_mode = "follow"
+      follow_selection(entries)
+    end
+
+    reaper.ImGui_SameLine(ctx)
+
+    if SB.button(ctx, "None", 90) then
+      tick_mode = "manual"
+      ticked = {}
+    end
+
+    reaper.ImGui_SameLine(ctx)
+    reaper.ImGui_AlignTextToFramePadding(ctx)
+    SB.label(ctx, tostring(#picked_entries()) .. " ticked")
+  end
+
+  -- What gets copied is read at CLICK time and handed to the queued work, the
+  -- same way the selection used to be.
+  local function draw_buttons(ctx, SB, stacked)
+    local function next_item()
+      if not stacked then
+        reaper.ImGui_SameLine(ctx)
+      end
+    end
+
+    if SB.primary_button(ctx, "Copy to cursor", 200) then
+      local picked = picked_entries()
+      pending = function() run_copy(picked, reaper.GetCursorPosition()) end
+    end
+
+    next_item()
+
+    if SB.button(ctx, "Copy to measure.beats", 200) then
+      local picked = picked_entries()
+      local target = parse_target_position(measure_input)
+      pending = function() run_copy(picked, target) end
+    end
+
+    next_item()
+
+    if SB.button(ctx, "Copy to hh:mm:ss:ff", 200) then
+      local picked = picked_entries()
+      local target = parse_target_position(timecode_input)
+      pending = function() run_copy(picked, target) end
+    end
+  end
+
+  -- Sections stacked, the way the single window has always had them, with the
+  -- marker list between the target fields and the copy buttons.
   local function draw_narrow(ctx, SB, entries, current_cursor_pos)
     SB.section(ctx, "Edit cursor")
     SB.label(ctx, "Measure   " .. reaper.format_timestr_pos(current_cursor_pos, "", 2))
@@ -275,11 +463,17 @@ function M.create(env)
 
     SB.label(ctx, "Empty field follows the edit cursor. Type a position to pin it.")
 
-    draw_buttons(ctx, SB, entries)
+    reaper.ImGui_Separator(ctx)
+    SB.section(ctx, "Markers")
+
+    draw_rows(ctx, SB)
+    draw_pick_controls(ctx, SB, entries)
+
+    draw_buttons(ctx, SB, false)
   end
 
   -- One flat strip across the docker: the cursor read-out, then the two
-  -- fields and the three buttons in ONE row, then the hint.
+  -- fields and the three buttons in ONE row, then the hint, then the list.
   local function draw_wide(ctx, SB, entries, current_cursor_pos)
     SB.label(ctx, "Measure   " .. reaper.format_timestr_pos(current_cursor_pos, "", 2))
     reaper.ImGui_SameLine(ctx)
@@ -288,9 +482,12 @@ function M.create(env)
     draw_fields(ctx, true)
 
     reaper.ImGui_SameLine(ctx)
-    draw_buttons(ctx, SB, entries)
+    draw_buttons(ctx, SB, false)
 
     SB.label(ctx, "Empty field follows the edit cursor. Type a position to pin it.")
+
+    draw_rows(ctx, SB)
+    draw_pick_controls(ctx, SB, entries)
   end
 
   -- Draws the panel into a frame the host has already opened.
@@ -313,7 +510,14 @@ function M.create(env)
       timecode_input = reaper.format_timestr_pos(current_cursor_pos, "", 5)
     end
 
+    -- the list first: follow mode can only tick markers that have a row
+    refresh_list()
+
     local entries, reason, source = selection(opts)
+
+    if tick_mode == "follow" then
+      follow_selection(entries)
+    end
 
     if opts.show_selection then
       draw_selection(ctx, SB, entries, reason, source)
