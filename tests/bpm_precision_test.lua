@@ -139,18 +139,72 @@ local specific = {
   new_array = fake_array,
 }
 
+-- What the last rendered frame submitted. Scenario (f) is the only one that
+-- draws, and what it needs to know is which button was drawn inside a
+-- BeginDisabled block -- so every button records the disabled depth it was
+-- submitted at, rather than the test guessing from a call count.
+local drawn = { buttons = {}, texts = {}, bars = {}, rects = {} }
+local disabled_depth = 0
+local click_label = nil
+
+local function reset_frame()
+  drawn = { buttons = {}, texts = {}, bars = {}, rects = {} }
+  disabled_depth = 0
+end
+
 reaper = setmetatable({}, {
   __index = function(_, key)
     if specific[key] then return specific[key] end
     if not key:match("^ImGui_") then return function() return 0 end end
     if not real_imgui[key] then return nil end
-    return function() return nil end
+
+    return function(...)
+      local _, a2, a3, a4, a5, a6 = ...
+
+      if key == "ImGui_BeginDisabled" then
+        if a2 ~= false then disabled_depth = disabled_depth + 1 end
+        return nil
+      end
+      if key == "ImGui_EndDisabled" then
+        disabled_depth = disabled_depth - 1
+        return nil
+      end
+      if key == "ImGui_Button" then
+        drawn.buttons[a2] = disabled_depth
+        return a2 == click_label
+      end
+      if key == "ImGui_ProgressBar" then
+        drawn.bars[#drawn.bars + 1] = { fraction = a2, overlay = a5 }
+        return nil
+      end
+      if key == "ImGui_DrawList_AddRectFilled" then
+        -- (dl, x0, y0, x1, y1, color, rounding): the fill width of the compact
+        -- meter is x1 - x0, which is how (f) reads the bar without a screenshot.
+        drawn.rects[#drawn.rects + 1] = { x0 = a2, x1 = a4, color = a6 }
+        return nil
+      end
+      if key == "ImGui_TextColored" then drawn.texts[#drawn.texts + 1] = a3 return nil end
+      if key == "ImGui_Text" or key == "ImGui_TextWrapped" then
+        drawn.texts[#drawn.texts + 1] = a2
+        return nil
+      end
+      if key == "ImGui_Checkbox" then return false, a3 end
+      if key == "ImGui_InputInt" or key == "ImGui_InputText" then return false, a3 end
+      if key == "ImGui_GetCursorScreenPos" then return 100, 100 end
+      if key == "ImGui_GetFrameHeight" then return 23 end
+      if key == "ImGui_GetWindowDrawList" then return "dl" end
+      if key == "ImGui_GetContentRegionAvail" then return 400, 300 end
+      if key:match("^ImGui_Col_") or key:match("^ImGui_StyleVar_")
+        or key:match("^ImGui_Cond_") or key:match("Flags") then return 1 end
+      return nil
+    end
   end,
 })
 
 -- ------------------------------------------------------------------ the module
 
 local BPM = dofile(folder .. "steelblue_bpm.lua")
+local SB = dofile(folder .. "steelblue_ui.lua")
 
 -- Every scenario gets its own panel. A finished precision pass switches "Live
 -- update" off on purpose, and a scenario that needs it on would otherwise
@@ -235,6 +289,24 @@ end
 -- panel is doing.
 local function frame()
   panel.tick()
+end
+
+-- A frame the way the workspace draws one: tick, the compact block, then the
+-- queued click after the window would have closed.
+local function compact_frame()
+  reset_frame()
+  panel.tick()
+  panel.frame("ctx", SB, { layout = "compact" })
+  panel.after_frame()
+end
+
+local function has_text(prefix)
+  for _, text in ipairs(drawn.texts) do
+    if type(text) == "string" and text:sub(1, #prefix) == prefix then
+      return text
+    end
+  end
+  return nil
 end
 
 print("\nLive BPM Analyzer -- the precision pass, one step per frame:\n")
@@ -496,6 +568,108 @@ do
   check("(g) progress is gone with the job",
     T.precision_progress() == nil,
     "")
+end
+
+
+-- (f) ------------------------------------------- what the layouts show
+do
+  load_song()
+
+  -- One frame first: the live path picks the item on it, and picking a new item
+  -- clears the read-out on purpose. Only after that is a value put on screen
+  -- something the next frames have to keep showing.
+  compact_frame()
+  T.apply_estimate(128, 0.5)
+
+  compact_frame()
+  check("(f) idle: the button is enabled",
+    drawn.buttons["Precision analyze"] == 0,
+    "disabled depth " .. tostring(drawn.buttons["Precision analyze"]))
+
+  -- the confidence bar, so the progress bar below can be told apart from it
+  local idle_fill = drawn.rects[2] and (drawn.rects[2].x1 - drawn.rects[2].x0)
+  check("(f) and the bar shows confidence",
+    idle_fill and math.abs(idle_fill - (0.5 * 46)) < 1e-9,
+    string.format("%.2f px of 46", idle_fill or -1))
+
+  click_label = "Precision analyze"
+  compact_frame()
+  click_label = nil
+
+  local job = T.get_precision_job()
+  check("(f) clicking it starts the pass after the frame",
+    job ~= nil,
+    job and job.phase or "no job")
+
+  compact_frame()
+  local progress = T.precision_progress()
+
+  check("(f) and from then on the button is drawn disabled",
+    drawn.buttons["Precision analyze"] == 1,
+    "disabled depth " .. tostring(drawn.buttons["Precision analyze"]))
+  check("(f) and the disabled block is closed again before the frame ends",
+    disabled_depth == 0,
+    "depth " .. disabled_depth)
+  check("(f) while >>> stays clickable",
+    drawn.buttons["\u{203A}\u{203A}\u{203A}"] == 0,
+    "disabled depth " .. tostring(drawn.buttons["\u{203A}\u{203A}\u{203A}"]))
+
+  local fill = drawn.rects[2] and (drawn.rects[2].x1 - drawn.rects[2].x0)
+  check("(f) the bar now shows the progress, in the same blue",
+    fill and math.abs(fill - (progress * 46)) < 1e-9
+      and drawn.rects[2].color == SB.color.blue,
+    string.format("%.2f px, want %.2f", fill or -1, (progress or 0) * 46))
+  check("(f) and the read-out still shows the last value",
+    has_text("128.00") ~= nil,
+    table.concat({ tostring(has_text("128.00")) }, ""))
+
+  -- a second click while the pass runs. The fake button does not honour
+  -- BeginDisabled -- which is the point: this is on_precision's own guard.
+  local before = T.get_precision_job()
+  local read_before = before.read_pos
+  click_label = "Precision analyze"
+  compact_frame()
+  click_label = nil
+
+  check("(f) a second click does not restart the pass",
+    T.get_precision_job() == before and T.get_precision_job().read_pos > read_before,
+    string.format("read_pos %.1f -> %.1f", read_before, T.get_precision_job().read_pos))
+
+  -- the popup swaps one row for the other
+  reset_frame()
+  panel.popup("ctx", SB)
+  check("(f) the popup says how far along the pass is",
+    has_text("Precision pass") ~= nil and has_text("Last analysis") == nil,
+    tostring(has_text("Precision pass")))
+
+  -- and the single script's own window grows a progress bar
+  reset_frame()
+  panel.frame("ctx", SB, { layout = "window" })
+  check("(f) the window draws a progress bar with the percentage on it",
+    #drawn.bars == 1 and drawn.bars[1].fraction == T.precision_progress()
+      and drawn.bars[1].overlay == string.format("Precision pass %d%%",
+        math.floor(T.precision_progress() * 100)),
+    drawn.bars[1] and tostring(drawn.bars[1].overlay) or "no bar")
+
+  -- run it out; both layouts go back to what they were
+  local guard = 0
+  while T.get_precision_job() and guard < 50 do compact_frame() guard = guard + 1 end
+
+  check("(f) when it is over the button is enabled again",
+    drawn.buttons["Precision analyze"] == 0,
+    "disabled depth " .. tostring(drawn.buttons["Precision analyze"]))
+
+  reset_frame()
+  panel.frame("ctx", SB, { layout = "window" })
+  check("(f) and the window has no bar left",
+    #drawn.bars == 0,
+    #drawn.bars .. " bars")
+
+  reset_frame()
+  panel.popup("ctx", SB)
+  check("(f) the popup says what the last analysis cost again",
+    has_text("Last analysis") ~= nil and has_text("Precision pass") == nil,
+    tostring(has_text("Last analysis")))
 end
 
 print(fails == 0 and "\nALL PASS" or ("\nFAILURES: " .. fails))

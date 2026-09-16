@@ -1399,9 +1399,19 @@ function M.create(env)
     return 0.95
   end
 
+  -- One percentage, three places: the status line, the bar in the window and the
+  -- popup's row. They must never disagree about how far along the pass is.
+  local function precision_percent(progress)
+    return math.floor((progress or 0) * 100)
+  end
+
+  local function precision_overlay(progress)
+    return string.format("Precision pass %d%%", precision_percent(progress))
+  end
+
   local function precision_status()
     return string.format("Running precision pass... %d%%",
-      math.floor((precision_progress() or 0) * 100))
+      precision_percent(precision_progress()))
   end
 
   -- Sets the job up, or says why it cannot run. Everything that can fail before
@@ -1835,6 +1845,15 @@ function M.create(env)
       on_clear()
     end
 
+    -- While a precision pass runs, this is the only thing on screen that moves.
+    -- ImGui_ProgressBar is in the installed dylib (checked against the function
+    -- list of reaper_imgui-arm64.dylib) and carries the percentage as its own
+    -- overlay text, so the bar needs no label line under it.
+    local progress = precision_progress()
+    if progress then
+      reaper.ImGui_ProgressBar(ctx, progress, 220, 0, precision_overlay(progress))
+    end
+
     if octave_note then
       reaper.ImGui_Separator(ctx)
       reaper.ImGui_TextWrapped(ctx, octave_note)
@@ -1858,7 +1877,11 @@ function M.create(env)
     return 23
   end
 
-  local function draw_compact_meter(ctx, SB)
+  -- The header band has room for one bar, so it does double duty: confidence
+  -- normally, and the precision pass's progress while one runs. Same blue --
+  -- what it means is said by the button next to it going grey and by the status
+  -- line; a second colour here would only be one more thing to learn.
+  local function draw_compact_meter(ctx, SB, fraction)
     local height = frame_height(ctx)
     local x, y = reaper.ImGui_GetCursorScreenPos(ctx)
     local dl = reaper.ImGui_GetWindowDrawList(ctx)
@@ -1868,7 +1891,7 @@ function M.create(env)
       reaper.ImGui_DrawList_AddRectFilled(dl, x, top,
         x + COMPACT_METER_W, top + COMPACT_METER_H, SB.color.frame_bg, 3)
 
-      local filled = clamp(confidence, 0, 1) * COMPACT_METER_W
+      local filled = clamp(fraction, 0, 1) * COMPACT_METER_W
       if filled > 0 then
         reaper.ImGui_DrawList_AddRectFilled(dl, x, top,
           x + filled, top + COMPACT_METER_H, SB.color.blue, 3)
@@ -1882,6 +1905,8 @@ function M.create(env)
   -- the switch, one button, and ">>>" for everything else. Returns true when
   -- ">>>" was pressed -- the popup belongs to the host.
   local function draw_compact(ctx, SB)
+    local progress = precision_progress()
+
     reaper.ImGui_AlignTextToFramePadding(ctx)
     reaper.ImGui_TextColored(ctx, SB.color.text_muted, "LIVE BPM")
     reaper.ImGui_SameLine(ctx)
@@ -1897,7 +1922,7 @@ function M.create(env)
     reaper.ImGui_TextColored(ctx, SB.color.text_muted, "BPM")
     reaper.ImGui_SameLine(ctx)
 
-    draw_compact_meter(ctx, SB)
+    draw_compact_meter(ctx, SB, progress or confidence)
     reaper.ImGui_SameLine(ctx)
 
     -- "##" hides the label: the switch has no text of its own in the design.
@@ -1905,8 +1930,18 @@ function M.create(env)
     _, live_update = reaper.ImGui_Checkbox(ctx, "##live_bpm", live_update)
     reaper.ImGui_SameLine(ctx)
 
+    -- Grey while the pass runs: the bar next to it is already this button's
+    -- progress, and a second pass on top of the first is nothing a user wants.
+    if progress then
+      reaper.ImGui_BeginDisabled(ctx, true)
+    end
+
     if SB.button(ctx, "Precision analyze", 0, 0) then
       on_precision()
+    end
+
+    if progress then
+      reaper.ImGui_EndDisabled(ctx)
     end
 
     reaper.ImGui_SameLine(ctx)
@@ -1928,8 +1963,17 @@ function M.create(env)
     SB.label(ctx, string.format("Raw confidence  %.0f%%", raw_confidence * 100))
     SB.label(ctx, string.format("Project tempo   %.2f", reaper.Master_GetTempo()))
     SB.label(ctx, "Source          " .. (source_text or "-"))
-    SB.label(ctx, "Last analysis   " ..
-      (last_analysis_ms and string.format("%.1f ms", last_analysis_ms.total) or "-"))
+
+    -- The popup has no room for a bar, and "what did the last pass cost" is not
+    -- the question while a pass is running. Same row, the answer to whichever
+    -- question is the live one.
+    local progress = precision_progress()
+    if progress then
+      SB.label(ctx, string.format("Precision pass  %d%%", precision_percent(progress)))
+    else
+      SB.label(ctx, "Last analysis   " ..
+        (last_analysis_ms and string.format("%.1f ms", last_analysis_ms.total) or "-"))
+    end
 
     reaper.ImGui_Separator(ctx)
     SB.section(ctx, "Range")
