@@ -64,7 +64,7 @@ local COLUMN_GAP = 24
 -- the controls.
 local MIN_LEFT_WIDTH = 280
 
--- Wide layout: the three copy buttons are stacked, so they can afford to be
+-- Wide layout: the three copy buttons sit in one row under the fields, so they can afford to be
 -- wider than in the single window, where all three sit in one row.
 local BUTTON_WIDTH_WIDE = 240
 local BUTTON_WIDTH_NARROW = 200
@@ -640,14 +640,17 @@ function M.create(env)
     reaper.ImGui_Separator(ctx)
     SB.section(ctx, "Target position")
 
-    draw_fields(ctx, false)
+    -- Side by side: at 400 px of docker the column has ~250 px, and the
+    -- loosened sections cost more than the flat row did. Fields in one row and
+    -- the three buttons in one row bring it to ~219 px (Tobi decided 400 px).
+    draw_fields(ctx, true)
 
     SB.label(ctx, "Empty field follows the edit cursor. Type a position to pin it.")
 
     reaper.ImGui_Separator(ctx)
     SB.section(ctx, "Copy")
 
-    draw_buttons(ctx, SB, true, BUTTON_WIDTH_WIDE)
+    draw_buttons(ctx, SB, false, BUTTON_WIDTH_WIDE)
 
     -- The tick row belongs to the list, not to the copy buttons; 6 px of air
     -- says so without a second separator.
