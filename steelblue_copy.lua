@@ -38,6 +38,54 @@ M.VERSION = "1.1"
 -- each other instead of after the longest timestamp.
 local POSITION_WIDTH = 80
 
+-- How many rows the single window's list shows before it scrolls. That window
+-- auto-sizes to its content, so the list must NOT: a child of a FIXED height is
+-- the one thing that keeps the window from growing with the project.
+local LIST_ROWS = 8
+
+-- Narrow layout. Under the width of the three copy buttons in a row
+-- (3 x 200 + 2 x ItemSpacing.x = 616), so the list never gets to decide how
+-- wide the auto-sizing window is.
+local LIST_WIDTH = 600
+
+-- Wide layout: the controls column, the rest of the docker is the list.
+local LEFT_WIDTH = 420
+
+-- What steelblue_workspace.lua reserves under the panel for its status strip
+-- (steelblue_workspace.lua: FOOTER_HEIGHT = 2 + 7 + 26 + 7), plus the one
+-- ItemSpacing.y between the columns and that strip. The columns leave exactly
+-- this much, so the docked window's content ends where the window does and no
+-- scrollbar appears on it -- only inside the children.
+local HOST_FOOTER_HEIGHT = 2 + 7 + 26 + 7
+local ITEM_SPACING_Y = 7          -- StyleVar_ItemSpacing.y in steelblue_ui.lua
+local FRAME_HEIGHT_FALLBACK = 23  -- body font 13 + 2 x FramePadding.y 5
+
+-- BeginChild is not Begin. Dear ImGui wants EndChild after EVERY BeginChild,
+-- whatever it returned: the installed dylib documents BeginChild as "Returns
+-- false to indicate the window is collapsed or fully clipped" (reaper_imgui
+-- 0.10, APIdef_ImGui_BeginChild) and asserts "Missing EndChild()" when the
+-- call is skipped. So the pairing sits OUTSIDE the branch, and
+-- tests/plugin_render_test.lua counts the pair the way it counts Begin/End.
+local function child(ctx, SB, id, width, height, background, draw)
+  local tinted = false
+  if background and reaper.ImGui_Col_ChildBg then
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ChildBg(), background)
+    tinted = true
+  end
+
+  local child_flags = reaper.ImGui_ChildFlags_None and reaper.ImGui_ChildFlags_None() or 0
+  local window_flags = reaper.ImGui_WindowFlags_None and reaper.ImGui_WindowFlags_None() or 0
+
+  if reaper.ImGui_BeginChild(ctx, id, width, height, child_flags, window_flags) then
+    draw()
+  end
+  reaper.ImGui_EndChild(ctx)
+
+  if tinted then
+    reaper.ImGui_PopStyleColor(ctx, 1)
+  end
+end
+
 local function trim(value)
   return (value or ""):match("^%s*(.-)%s*$")
 end
@@ -449,6 +497,32 @@ function M.create(env)
     end
   end
 
+  -- Eight rows' worth. Fixed, because the window around it auto-sizes.
+  local function narrow_list_height(ctx)
+    local frame_h = FRAME_HEIGHT_FALLBACK
+    if reaper.ImGui_GetFrameHeight then
+      local measured = reaper.ImGui_GetFrameHeight(ctx)
+      if type(measured) == "number" and measured > 0 then
+        frame_h = measured
+      end
+    end
+    return LIST_ROWS * (frame_h + ITEM_SPACING_Y)
+  end
+
+  -- Everything the host has left, minus what it still needs for its footer.
+  local function wide_column_height(ctx)
+    local _, avail_h = reaper.ImGui_GetContentRegionAvail(ctx)
+    if type(avail_h) ~= "number" then
+      return 200
+    end
+
+    local height = avail_h - HOST_FOOTER_HEIGHT - ITEM_SPACING_Y
+    if height < 80 then
+      height = 80
+    end
+    return height
+  end
+
   -- Sections stacked, the way the single window has always had them, with the
   -- marker list between the target fields and the copy buttons.
   local function draw_narrow(ctx, SB, entries, current_cursor_pos)
@@ -466,28 +540,54 @@ function M.create(env)
     reaper.ImGui_Separator(ctx)
     SB.section(ctx, "Markers")
 
-    draw_rows(ctx, SB)
+    child(ctx, SB, "copy_pick_list", LIST_WIDTH, narrow_list_height(ctx), SB.color.frame_bg,
+      function() draw_rows(ctx, SB) end)
+
     draw_pick_controls(ctx, SB, entries)
 
     draw_buttons(ctx, SB, false)
   end
 
-  -- One flat strip across the docker: the cursor read-out, then the two
-  -- fields and the three buttons in ONE row, then the hint, then the list.
+  -- Two columns across the docker: the controls on the left at a fixed width,
+  -- the marker list taking the rest of the width and all of the height the
+  -- host has not reserved for its footer.
+  --
+  -- The left column is a GROUP, not a child: it has to keep drawing its
+  -- buttons whatever happens, and a child that reports itself clipped would
+  -- take the whole panel off screen with it. Only the list -- the part that
+  -- has to scroll -- is a child.
   local function draw_wide(ctx, SB, entries, current_cursor_pos)
+    local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
+    local height = wide_column_height(ctx)
+
+    local left_w = LEFT_WIDTH
+    if type(avail_w) == "number" and avail_w > 0 and avail_w < LEFT_WIDTH * 2 then
+      left_w = math.max(240, avail_w / 2)
+    end
+
+    reaper.ImGui_BeginGroup(ctx)
+
     SB.label(ctx, "Measure   " .. reaper.format_timestr_pos(current_cursor_pos, "", 2))
-    reaper.ImGui_SameLine(ctx)
     SB.label(ctx, "Timecode  " .. reaper.format_timestr_pos(current_cursor_pos, "", 5))
 
-    draw_fields(ctx, true)
-
-    reaper.ImGui_SameLine(ctx)
-    draw_buttons(ctx, SB, false)
+    draw_fields(ctx, false)
 
     SB.label(ctx, "Empty field follows the edit cursor. Type a position to pin it.")
 
-    draw_rows(ctx, SB)
+    draw_buttons(ctx, SB, true)
     draw_pick_controls(ctx, SB, entries)
+
+    -- Claims the column's width without submitting anything visible, so the
+    -- list starts at a fixed x whatever the longest label happens to be.
+    reaper.ImGui_Dummy(ctx, left_w, 1)
+
+    reaper.ImGui_EndGroup(ctx)
+
+    reaper.ImGui_SameLine(ctx)
+
+    -- width 0 = whatever is left of the docker
+    child(ctx, SB, "copy_pick_list", 0, height, SB.color.frame_bg,
+      function() draw_rows(ctx, SB) end)
   end
 
   -- Draws the panel into a frame the host has already opened.

@@ -541,6 +541,48 @@ do
     "g4) and it is still copied", h.added_text())
 end
 
+-- -------------------------------------------- (f) the list in both hosts
+
+do
+  local h = start_single({ selected_rows = { 1, 2 } })
+
+  h.frame()
+  check(h.drew_button("Copy to cursor") and h.drew_button("Copy to measure.beats")
+    and h.drew_button("Copy to hh:mm:ss:ff"),
+    "f1) the single window draws the three copy buttons", h.button_count() .. " buttons")
+  check(h.drew_button("Use selection") and h.drew_button("None"),
+    "f2) and the two tick buttons", "")
+  check(h.children() == 1, "f3) and puts the list in ONE child of its own",
+    h.children() .. " children")
+  check(h.child_balance() == 0, "f4) every BeginChild has its EndChild",
+    "balance " .. h.child_balance())
+end
+
+do
+  -- the workspace, with the Copy Markers tab open
+  local handle
+  reaper, handle = build_reaper({ selected_rows = { 1, 2 }, ext = { active_tab = "copy" } })
+  local ok, err = pcall(dofile, folder .. "steelblue_workspace.lua")
+  if not ok then error("steelblue_workspace.lua failed to load: " .. tostring(err)) end
+
+  handle.frame()
+  check(handle.drew_button("Copy to cursor") and handle.drew_button("Copy to measure.beats")
+    and handle.drew_button("Copy to hh:mm:ss:ff"),
+    "f5) the copy tab draws the same three buttons", handle.button_count() .. " buttons")
+  check(handle.drew_button("Use selection") and handle.drew_button("None"),
+    "f6) and the same two tick buttons", "")
+  check(handle.children() == 1, "f7) and puts the list in a child there too",
+    handle.children() .. " children")
+  check(handle.child_balance() == 0, "f8) every BeginChild has its EndChild",
+    "balance " .. handle.child_balance())
+  check(#handle.ticks() == 2, "f9) the ticks work there too", keys(handle.ticks()))
+
+  handle.frame({ click = "Copy to cursor" })
+  handle.frame()
+  check(handle.added_text() == "verse@34.20 buildup@37.95",
+    "f10) and so does the copy", handle.added_text())
+end
+
 -- ------------------------------------------------ (h) 600 markers, measured
 
 do

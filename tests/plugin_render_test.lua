@@ -87,6 +87,13 @@ local function make_reaper()
           -- belongs in the "true" branch, exactly as ImGui_End does for a
           -- collapsed window -- so the increment sits with the return value.
           if key == "ImGui_EndTabItem" then state.tabs = state.tabs - 1 end
+          -- A child window is a Begin/End pair and leaks exactly like a
+          -- window -- but unlike ImGui_End, EndChild belongs OUTSIDE the
+          -- "true" branch: Dear ImGui wants it after every BeginChild
+          -- whatever BeginChild returned. So this fake says "true" (below)
+          -- and counts both calls; a missing EndChild is then a +1 on the
+          -- children stack, exactly like a missing End.
+          if key == "ImGui_EndChild" then state.children = state.children - 1 end
 
           if key == "ImGui_CreateContext" then return "ctx" end
           if key == "ImGui_CreateFont" then return "font" end
@@ -135,6 +142,12 @@ local function make_reaper()
           -- read as closed, and then a BeginPopup that is not in the dylib at
           -- all would look like a passing test.
           if key == "ImGui_BeginPopup" then return false end
+          -- A child that is on screen. Saying "false" here would let a panel
+          -- skip everything inside it and still look like it rendered.
+          if key == "ImGui_BeginChild" then
+            state.children = state.children + 1
+            return true
+          end
 
           -- every button label that was submitted, so a run can be asked
           -- afterwards whether a panel really got drawn
@@ -187,7 +200,8 @@ print("rendering each script for 30 frames against a fake REAPER:\n")
 
 for _, name in ipairs(plugins) do
   state = { frame = 0, colors = 0, vars = 0, fonts = 0, windows = 0, widths = 0,
-            tabs = 0, tab_items = 0, missing = {}, messages = {}, labels = {} }
+            tabs = 0, tab_items = 0, children = 0,
+            missing = {}, messages = {}, labels = {} }
 
   local get_deferred
   reaper, get_deferred = make_reaper()
@@ -212,7 +226,7 @@ for _, name in ipairs(plugins) do
   local problems = {}
   if not ok then problems[#problems + 1] = "ERROR: " .. tostring(err) end
   for k in pairs(state.missing) do problems[#problems + 1] = "missing API " .. k end
-  for _, key in ipairs({ "colors", "vars", "fonts", "windows", "widths", "tabs" }) do
+  for _, key in ipairs({ "colors", "vars", "fonts", "windows", "widths", "tabs", "children" }) do
     if state[key] ~= 0 then
       problems[#problems + 1] = string.format("%s stack %+d", key, state[key])
     end
