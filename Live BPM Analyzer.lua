@@ -333,13 +333,18 @@ end
 -- everything the smoothing carries has to go -- a history mixing two songs
 -- shows a tempo neither of them has.
 local function set_current_item(item)
+  -- The label is re-read on every pass, not only when the item changes: the
+  -- item pointer stays the same when the user renames its track or drags it
+  -- onto another one, and a "Source" line frozen on the old track number is
+  -- exactly the silent wrong answer this line exists to prevent.
+  source_text = item and source_text_of(item) or nil
+  source_is_timecode = (item and item_is_timecode(item)) or false
+
   if item == current_item then
     return
   end
 
   current_item = item
-  source_text = item and source_text_of(item) or nil
-  source_is_timecode = (item and item_is_timecode(item)) or false
 
   history = {}
   current_bpm = nil

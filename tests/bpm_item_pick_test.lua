@@ -396,6 +396,48 @@ do
     err == "Selected item has no active take.", tostring(err))
 end
 
+-- (j) --------------------------- the Source line follows renames and track swaps
+-- Tobi, TT 52 (2026-09-15): after swapping the TC and song tracks the line kept
+-- saying "Track 2", and renaming the track changed nothing either. The item
+-- pointer is the same item; only what is around it changed.
+do
+  load_project({
+    { name = "LTC", items = { { pos = 0, len = 200, take_name = "tc.wav" } } },
+    { name = "Song", items = { { pos = 0, len = 200, take_name = "song.wav" } } },
+  })
+  cursor.playing = true
+  cursor.play_pos = 10
+  T.set_current_item(nil)
+
+  local song = item_at(2, 1)
+  local item = pick(nil)
+  check("(j) starts on Track 2 \"Song\"",
+    item == song and T.get_display_state().source_text == "Track 2 \"Song\" \u{00B7} song.wav",
+    tostring(T.get_display_state().source_text))
+
+  -- The user renames the track. Same item, same pick -- the line must follow.
+  project.tracks[2].name = "Main mix"
+  item = pick(song)
+  check("(j) renaming the track renames the Source line",
+    item == song and T.get_display_state().source_text == "Track 2 \"Main mix\" \u{00B7} song.wav",
+    tostring(T.get_display_state().source_text))
+
+  -- The user swaps the two tracks: the song now lies on track 1.
+  local ltc_track, song_track = project.tracks[1], project.tracks[2]
+  project.tracks[1], project.tracks[2] = song_track, ltc_track
+  song_track.number, ltc_track.number = 1, 2
+  item = pick(song)
+  check("(j) after a track swap it says Track 1, and stays on the song",
+    item == song and T.get_display_state().source_text == "Track 1 \"Main mix\" \u{00B7} song.wav",
+    tostring(T.get_display_state().source_text))
+
+  -- and the smoothing was NOT thrown away for a mere relabel
+  T.apply_estimate(120.0, 0.9)
+  pick(song)
+  check("(j) a relabel keeps the history",
+    #T.get_display_state().history == 1, #T.get_display_state().history .. " entries")
+end
+
 -- error case ------------------------------------------------------------------
 do
   load_project({
