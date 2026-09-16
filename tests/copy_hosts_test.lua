@@ -8,6 +8,11 @@
 -- same click in the tab, the fields following the cursor there, the footer,
 -- no Close button anywhere, and the queue emptied after one run.
 --
+-- Since v2j it also watches the two tick-row buttons by name: "Use selection"
+-- and "Clear selection" (Tobi, 2026-09-16 -- "None" read like a filter). The
+-- label collector here is a plain list of every ImGui_Button label, so the old
+-- name reappearing anywhere makes a2/a9/b10 go red.
+--
 -- Same fake as rename_hosts_test.lua: the tab bar remembers its selection the
 -- way Dear ImGui does, every frame is a second later so the 150 ms selection
 -- poll fires on each of them, and JS_ReaScriptAPI reports the manager open
@@ -255,6 +260,10 @@ do
 
     frame()
     check(#added == 3, "a7) two more frames do not copy again", #added .. " copies")
+
+    check(drew("Use selection") and drew("Clear selection"),
+      "a8) the tick row says Use selection / Clear selection", "")
+    check(not drew("None"), "a9) and never the old \"None\"", "")
   end
 end
 
@@ -288,6 +297,10 @@ do
 
     frame()
     check(#added == 3, "b8) two more frames do not copy again", #added .. " copies")
+
+    check(drew("Use selection") and drew("Clear selection"),
+      "b9) the tab's tick row uses the same two names", "")
+    check(not drew("None"), "b10) and never the old \"None\" either", "")
   end
 end
 

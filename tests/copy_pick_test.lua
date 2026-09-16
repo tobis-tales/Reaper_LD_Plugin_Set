@@ -322,10 +322,12 @@ local function build_reaper(opts)
       end
       return all
     end,
-    -- the "N ticked" counter, as the panel drew it
+    -- The "N selected" counter, as the panel drew it. The single window also
+    -- draws "N markers selected" in its Selection block; the anchored pattern
+    -- cannot confuse the two.
     counter = function()
       for _, text in ipairs(texts) do
-        local n = tostring(text):match("^(%d+) ticked$")
+        local n = tostring(text):match("^(%d+) selected$")
         if n then return tonumber(n) end
       end
       return nil
@@ -393,7 +395,7 @@ do
   h.frame()
   check(#h.ticks() == 2 and h.ticks()[1] == "{G2}" and h.ticks()[2] == "{G3}",
     "a1) two markers selected -> exactly those two are ticked", keys(h.ticks()))
-  check(h.counter() == 2, "a2) and the counter says so", tostring(h.counter()) .. " ticked")
+  check(h.counter() == 2, "a2) and the counter says so", tostring(h.counter()) .. " selected")
   check(#h.tick_boxes() == 5, "a3) every marker in the project has a row",
     #h.tick_boxes() .. " rows")
   check(h.drew_text("Cues") and h.drew_text("FX") and h.drew_text("Music"),
@@ -432,15 +434,15 @@ do
     "b4) and the copy takes the three ticked, not the one selected", h.added_text())
 end
 
--- ------------------------------------------------------------- (c) None
+-- --------------------------------------------------- (c) Clear selection
 
 do
   local h = start_single({ selected_rows = { 1, 2 } })
 
   h.frame()
-  h.frame({ click = "None" })
+  h.frame({ click = "Clear selection" })
   h.frame()
-  check(#h.ticks() == 0, "c1) None clears every tick", keys(h.ticks()))
+  check(#h.ticks() == 0, "c1) Clear selection clears every tick", keys(h.ticks()))
   check(h.counter() == 0, "c2) and the counter follows", tostring(h.counter()))
 
   h.frame({ click = "Copy to cursor" })
@@ -449,7 +451,7 @@ do
   check(h.footer() == "Tick the markers to copy.", "c4) and says what to do instead",
     "footer " .. tostring(h.footer()))
 
-  -- None is manual: the selection must not tick itself again on the next frame
+  -- Clear selection is manual: the selection must not tick itself again next frame
   h.frame({ select = { 1, 2, 3 } })
   h.frame()
   check(#h.ticks() == 0, "c5) and the manager selection does not tick them again",
@@ -550,8 +552,9 @@ do
   check(h.drew_button("Copy to cursor") and h.drew_button("Copy to measure.beats")
     and h.drew_button("Copy to hh:mm:ss:ff"),
     "f1) the single window draws the three copy buttons", h.button_count() .. " buttons")
-  check(h.drew_button("Use selection") and h.drew_button("None"),
-    "f2) and the two tick buttons", "")
+  check(h.drew_button("Use selection") and h.drew_button("Clear selection"),
+    "f2) and the two tick buttons, by their new names", "")
+  check(not h.drew_button("None"), "f2b) and never the old \"None\"", "")
   check(h.children() == 1, "f3) and puts the list in ONE child of its own",
     h.children() .. " children")
   check(h.child_balance() == 0, "f4) every BeginChild has its EndChild",
@@ -569,8 +572,9 @@ do
   check(handle.drew_button("Copy to cursor") and handle.drew_button("Copy to measure.beats")
     and handle.drew_button("Copy to hh:mm:ss:ff"),
     "f5) the copy tab draws the same three buttons", handle.button_count() .. " buttons")
-  check(handle.drew_button("Use selection") and handle.drew_button("None"),
-    "f6) and the same two tick buttons", "")
+  check(handle.drew_button("Use selection") and handle.drew_button("Clear selection"),
+    "f6) and the same two tick buttons, by their new names", "")
+  check(not handle.drew_button("None"), "f6b) and never the old \"None\" here either", "")
   check(handle.children() == 1, "f7) and puts the list in a child there too",
     handle.children() .. " children")
   check(handle.child_balance() == 0, "f8) every BeginChild has its EndChild",

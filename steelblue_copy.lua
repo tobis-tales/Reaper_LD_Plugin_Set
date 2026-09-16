@@ -32,7 +32,7 @@
 
 local M = {}
 
-M.VERSION = "1.1"
+M.VERSION = "1.2"
 
 -- Width of the position column in the marker list, so the names line up under
 -- each other instead of after the longest timestamp.
@@ -446,8 +446,12 @@ function M.create(env)
     end
   end
 
-  -- "Use selection" also goes back to follow mode; "None" cannot, or the very
-  -- next frame would hand the ticks straight back from the manager.
+  -- "Use selection" also goes back to follow mode; "Clear selection" cannot, or
+  -- the very next frame would hand the ticks straight back from the manager.
+  --
+  -- The two labels say what they do rather than what they are (Tobi,
+  -- 2026-09-16): "None" on its own reads like a filter, and "N ticked" is not a
+  -- word anyone uses about a marker. Same wording in both layouts.
   local function draw_pick_controls(ctx, SB, entries)
     if SB.button(ctx, "Use selection", 140) then
       tick_mode = "follow"
@@ -456,14 +460,14 @@ function M.create(env)
 
     reaper.ImGui_SameLine(ctx)
 
-    if SB.button(ctx, "None", 90) then
+    if SB.button(ctx, "Clear selection", 130) then
       tick_mode = "manual"
       ticked = {}
     end
 
     reaper.ImGui_SameLine(ctx)
     reaper.ImGui_AlignTextToFramePadding(ctx)
-    SB.label(ctx, tostring(#picked_entries()) .. " ticked")
+    SB.label(ctx, tostring(#picked_entries()) .. " selected")
   end
 
   -- What gets copied is read at CLICK time and handed to the queued work, the
