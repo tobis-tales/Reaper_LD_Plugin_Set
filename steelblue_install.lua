@@ -517,33 +517,35 @@ local function startup_dir()
   return reaper.GetResourcePath() .. SEP .. "Scripts" .. SEP
 end
 
--- The block asks the workspace itself whether it wants to come back: the
--- workspace writes "1" while its window is open and "0" when the user closes
--- it, so quitting REAPER with the window open leaves "1" standing.
+-- v2i had the block ask the workspace itself whether it wanted to come back,
+-- reading an ExtState flag the workspace wrote on open/close. Tobi decided (TT
+-- 91/94, 2026-09-16, after TT 93 confirmed the EEL path works at all) that the
+-- workspace should open on every REAPER start, whether or not it was open when
+-- REAPER last quit -- so the block below runs the action unconditionally: no
+-- ExtState read, no guard.
 --
--- EEL2 is not Lua, and the three signatures come from the EEL2 column of the
--- ReaScript API reference, not from guessing at the Lua ones:
---   * a string-returning call takes its output buffer as the FIRST argument --
---     `bool GetExtState(#retval, "section", "key")` -- so the value lands in the
---     named string `#steelblue_autostart` rather than in a return value;
---   * `strcmp("str","str2")` is EEL2's string compare and returns 0 on equal,
---     so the test is `== 0`, not `!= 0`;
+-- A second start while the workspace is already running is harmless: REAPER
+-- asks or terminates the running instance per the action's own "already
+-- running" setting, and steelblue_workspace.lua now calls
+-- set_action_options(1) at its own start to pick "terminate" for that case.
+--
+-- EEL2 is not Lua, and the signature comes from the EEL2 column of the
+-- ReaScript API reference, not from guessing at the Lua one:
 --   * `int NamedCommandLookup("command_name")` and `Main_OnCommand(int, int)`
 --     read like their Lua twins.
--- Every name we introduce carries the steelblue_ prefix: this file is shared
--- with whatever else the user runs at startup, and EEL2 variables are global.
+-- The one variable we introduce carries the steelblue_ prefix: this file is
+-- shared with whatever else the user runs at startup, and EEL2 variables are
+-- global.
 --
 -- NamedCommandLookup returns 0 for an id this REAPER does not know -- after a
 -- reinstall from a different folder, for instance. Then nothing happens, which
--- is the right amount of noise for a startup script.
+-- is the right amount of noise for a startup script -- that is exactly why
+-- Main_OnCommand stays behind the "!= 0" check.
 local function autostart_block(command_id, newline)
   return table.concat({
     STARTUP_BEGIN,
-    'GetExtState(#steelblue_autostart, "steelblue_workspace", "autostart");',
-    'strcmp(#steelblue_autostart, "1") == 0 ? (',
-    '  steelblue_cmd = NamedCommandLookup("' .. command_id .. '");',
-    "  steelblue_cmd != 0 ? Main_OnCommand(steelblue_cmd, 0);",
-    ");",
+    'steelblue_cmd = NamedCommandLookup("' .. command_id .. '");',
+    "steelblue_cmd != 0 ? Main_OnCommand(steelblue_cmd, 0);",
     STARTUP_END,
   }, newline)
 end
@@ -751,7 +753,7 @@ local function summary(registered, target, restart_needed, removed, autostart)
   lines[#lines + 1] = "The disk image is no longer needed — you can eject and delete it."
   lines[#lines + 1] = "The plugins are in the Action List under their file names."
   lines[#lines + 1] = autostart
-    and "Reopens the workspace at startup when it was open at quit."
+    and "Opens the workspace at every REAPER start (remove the steelblue block from Scripts/__startup.eel to stop that)."
     or "Autostart not set up (no command id)"
   lines[#lines + 1] = ""
 

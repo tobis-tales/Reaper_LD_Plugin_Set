@@ -415,7 +415,7 @@ check(run("a) no __startup.eel yet: one is written with both markers", {
   end
   -- the workspace's id, not some other plugin's
   if text:find("RSother", 1, true) then return false, "named the wrong action" end
-  if not dialogs_matching(log, "Reopens the workspace at startup") then
+  if not dialogs_matching(log, "Opens the workspace at every REAPER start") then
     return false, "the summary never mentioned the autostart"
   end
   return true, "written, both markers, " .. WORKSPACE_COMMAND_ID
@@ -467,7 +467,7 @@ check(run("d) no ReverseNamedCommandLookup: no file, and the summary says so", {
   if not dialogs_matching(log, "Autostart not set up") then
     return false, "the summary claimed nothing was wrong"
   end
-  if dialogs_matching(log, "Reopens the workspace at startup") then
+  if dialogs_matching(log, "Opens the workspace at every REAPER start") then
     return false, "the summary promised an autostart it did not set up"
   end
   return true, "nothing written, summary says 'Autostart not set up (no command id)'"
@@ -477,15 +477,19 @@ end))
 -- with it. v2g could prove that by running the block through `load()`; EEL2 has
 -- no interpreter here, so this reads the block instead. Four things, each of
 -- which has been wrong in a hand-written EEL block before:
---   * the three API calls are spelled the way the EEL2 column of the ReaScript
+--   * the two API calls are spelled the way the EEL2 column of the ReaScript
 --     reference spells them, and the names really exist in the REAPER binary;
 --   * no line starts with "--" (that is a Lua comment; in EEL2 it is a minus
 --     sign followed by a minus sign, i.e. a syntax error);
---   * the parentheses balance -- the `cond ? ( ... );` block is the one place
---     that is easy to leave open;
---   * every statement ends in ";". A line may end in "(" instead, which opens
---     such a block; the last code line may not.
-check(run("e) the block is EEL2, not Lua, and guards on autostart", {
+--   * the parentheses balance;
+--   * every statement ends in ";".
+--
+-- v2o dropped the ExtState guard on Tobi's decision (TT 91/94, 2026-09-16):
+-- the block now runs the action unconditionally on every REAPER start, so
+-- there is no longer a "was the workspace open at quit?" check to verify --
+-- instead this proves that check is gone, and that what replaced it (the
+-- NamedCommandLookup result) still guards Main_OnCommand.
+check(run("e) the block is EEL2, not Lua, and runs unconditionally", {
   imgui = true, js = true, answers = { 1, 7 },
 }, function()
   local text = startup_text()
@@ -496,11 +500,8 @@ check(run("e) the block is EEL2, not Lua, and guards on autostart", {
   if not (begin_at and end_at) then return false, "no block to look at" end
   local block = text:sub(begin_at, end_at)
 
-  -- The three calls, literally, in the EEL2 spelling. GetExtState takes its
-  -- output buffer FIRST in EEL2 -- that is the whole reason this block cannot
-  -- be a transliteration of the Lua one.
+  -- The two calls, literally, in the EEL2 spelling.
   local wanted = {
-    'GetExtState(#steelblue_autostart, "steelblue_workspace", "autostart")',
     'NamedCommandLookup("' .. WORKSPACE_COMMAND_ID .. '")',
     "Main_OnCommand(steelblue_cmd, 0)",
   }
@@ -510,9 +511,19 @@ check(run("e) the block is EEL2, not Lua, and guards on autostart", {
     end
   end
 
+  -- The old ExtState guard must be gone -- it is what made the workspace stay
+  -- closed after a restart it was open at quit for, which is exactly the
+  -- behaviour Tobi asked to remove.
+  if block:find("GetExtState", 1, true) then
+    return false, "the block still reads ExtState -- it must run every start now"
+  end
+  if block:find("strcmp", 1, true) then
+    return false, "the block still guards with strcmp -- it must run every start now"
+  end
+
   -- A name that is not in the binary is a typo nobody would see until REAPER
   -- silently skipped the startup file on a stranger's machine.
-  for _, name in ipairs({ "GetExtState", "NamedCommandLookup", "Main_OnCommand" }) do
+  for _, name in ipairs({ "NamedCommandLookup", "Main_OnCommand" }) do
     local p = io.popen(string.format("strings %q | grep -cx -- %q", REAPER_BIN, name))
     local hits = tonumber(p:read("a")) or 0
     p:close()
@@ -543,15 +554,17 @@ check(run("e) the block is EEL2, not Lua, and guards on autostart", {
     return false, "the block's last statement does not end in ';'"
   end
 
-  -- The action must sit inside the strcmp guard, not next to it: an unguarded
-  -- Main_OnCommand would reopen the workspace Tobi closed on purpose.
-  local guard_at = block:find('strcmp(#steelblue_autostart, "1") == 0 ?', 1, true)
+  -- Main_OnCommand must sit behind the "!= 0" check, not next to it: calling
+  -- it unconditionally would fire Main_OnCommand(0, 0) whenever
+  -- NamedCommandLookup fails to find the action (a reinstall from a different
+  -- folder, say) -- an unrelated, wrong action id.
+  local guard_at = block:find("steelblue_cmd != 0 ?", 1, true)
   local action_at = block:find("Main_OnCommand", 1, true)
   if not guard_at or not action_at or action_at < guard_at then
-    return false, "Main_OnCommand is not behind the autostart guard"
+    return false, "Main_OnCommand is not behind the != 0 check"
   end
 
-  return true, "EEL2 spelling, balanced, guarded on autostart"
+  return true, "EEL2 spelling, balanced, no ExtState guard, Main_OnCommand behind != 0"
 end))
 
 -- --- the file v2g wrote, and REAPER never ran -------------------------------
