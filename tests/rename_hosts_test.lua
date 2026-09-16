@@ -13,6 +13,12 @@
 -- asked for with TabItemFlags_SetSelected becomes the selected one and stays
 -- selected afterwards. Handing "true" to every tab instead would draw all
 -- three tabs' contents at once and hide the very bug case (c) is about.
+--
+-- The popup fake works the same way it does in bpm_hosts_test.lua: a popup is
+-- open only once OpenPopup has been called for its id, and it stays open until
+-- CloseCurrentPopup. A fake that said "open" to every BeginPopup would draw the
+-- legend whether or not the button was ever pressed, which is the whole of what
+-- (e) and (f) below are asking about.
 
 local folder = ((arg[0]:match("(.*/)") or "./").."../")..""
 local dylib = ((arg[0]:match("(.*/)") or "./").."../").."extensions/macOS/reaper_imgui-arm64.dylib"
@@ -32,7 +38,11 @@ local BASE_PROJECT = {
 }
 
 local PROJECT, ext_state, deferred, footer_text, labels, texts, click_label, clock,
-  selection_polls, marker_writes
+  selection_polls, marker_writes, popups_open, current_popup
+
+-- The window height the fake reports. 500 px is Tobi's usual docker; (g) turns
+-- it down to 400, which is where the legend used to be dropped.
+local window_h = 500
 
 local function marker(id)
   for _, entry in ipairs(PROJECT) do
@@ -44,6 +54,23 @@ end
 local function drew(label)
   for _, seen in ipairs(labels) do
     if seen == label then return true end
+  end
+  return false
+end
+
+local function count_label(label)
+  local seen = 0
+  for _, value in ipairs(labels) do
+    if value == label then seen = seen + 1 end
+  end
+  return seen
+end
+
+-- Legend lines carry their columns in the string itself, so they are matched by
+-- a piece of their text rather than by the whole padded line.
+local function drew_text_containing(needle)
+  for _, text in ipairs(texts) do
+    if type(text) == "string" and text:find(needle, 1, true) then return true end
   end
   return false
 end
@@ -62,6 +89,7 @@ local function build_reaper(initial_ext)
 
   deferred, footer_text, click_label = nil, nil, nil
   labels, texts = {}, {}
+  popups_open, current_popup = {}, nil
   clock = 0
   selection_polls = 0
   marker_writes = 0
@@ -142,10 +170,22 @@ local function build_reaper(initial_ext)
         if key == "ImGui_GetWindowDrawList" then return "dl" end
         if key == "ImGui_Begin" then return true, true end
         if key == "ImGui_GetCursorScreenPos" then return 100, 100 end
-        -- a docked strip: wide enough for two legend columns, tall enough for
-        -- the legend to be asked for at all
+        -- a docked strip, the width Tobi's workspace actually has
         if key == "ImGui_GetContentRegionAvail" then return 1400, 300 end
-        if key == "ImGui_GetWindowSize" then return 1512, 500 end
+        if key == "ImGui_GetWindowSize" then return 1512, window_h end
+
+        -- A popup is open only once OpenPopup has been called for its id, and
+        -- it stays open until something closes it -- exactly the handshake the
+        -- "Legend" button depends on.
+        if key == "ImGui_OpenPopup" then popups_open[a2] = true return nil end
+        if key == "ImGui_BeginPopup" then
+          if popups_open[a2] then current_popup = a2 return true end
+          return false
+        end
+        if key == "ImGui_CloseCurrentPopup" then
+          if current_popup then popups_open[current_popup] = nil end
+          return nil
+        end
         if key == "ImGui_GetCursorPos" then return 12, 12 end
         if key == "ImGui_GetCursorPosX" then return 12 end
         if key == "ImGui_GetFrameHeight" then return 23 end
@@ -245,6 +285,9 @@ do
       "a4) the markers that were not selected are untouched",
       marker(1).name .. " / " .. marker(5).name)
     check(drew("Close"), "a5) its own window draws the Close button", "")
+    check(drew("Legend") and not drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
+      "a5b) it draws the Legend button and not the legend itself",
+      #texts .. " texts")
 
     -- the queue must be empty after the one click: not a single write on the
     -- frames that follow
@@ -280,6 +323,9 @@ do
     check(marker(2).name == "verse(1)[Top]^verse^",
       "b3) and renames the same three markers", marker(2).name)
     check(not drew("Close"), "b4) but no Close button -- the tab is not a window", "")
+    check(drew("Legend") and not drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
+      "b4b) the Legend button is there, the legend itself is not",
+      #texts .. " texts")
     check(selection_polls == 1,
       "b5) the selection is polled once per frame, by the workspace only",
       selection_polls .. " polls")
@@ -336,6 +382,90 @@ do
       "d1) the + button bumps the cue number before renaming",
       renamed)
   end
+end
+
+-- ------------------------------------------------------------ the legend popup
+
+-- The single window. Only opening is checked here: its own "Close" button
+-- carries the same label as the popup's, and a fake click by label would press
+-- both at once. Closing is checked on the workspace below, where the tab draws
+-- no Close of its own and the label belongs to the popup alone.
+do
+  reaper = capture_footer(build_reaper())
+  local ok, err = pcall(dofile, folder .. "Rename selected markers.lua")
+  if not ok then
+    check(false, "e) the single script loads for the legend test", tostring(err))
+  else
+    frame()
+    local before = count_label("Close")
+
+    click_label = "Legend"
+    frame()
+    click_label = nil
+    frame()
+
+    check(drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
+      "e1) clicking Legend opens the popup with the example line", "")
+    check(drew_text_containing("One sequence is generated per marker colour"),
+      "e2) the popup carries the introduction sentence too", "")
+    check(before == 1 and count_label("Close") == 2,
+      "e3) and a Close button of its own, next to the window's",
+      before .. " -> " .. count_label("Close"))
+  end
+end
+
+-- The workspace tab: open it, read it, close it.
+do
+  reaper = capture_footer(build_reaper({ active_tab = "rename" }))
+  local ok, err = pcall(dofile, folder .. "steelblue_workspace.lua")
+  if not ok then
+    check(false, "f) the workspace loads for the legend test", tostring(err))
+  else
+    frame()
+    check(count_label("Legend") == 1,
+      "f1) the tab draws exactly one Legend button", count_label("Legend") .. " drawn")
+
+    click_label = "Legend"
+    frame()
+    click_label = nil
+    frame()
+
+    check(drew_text_containing("BeatFx(1)[Top]^BeatFx^") and drew("Close"),
+      "f2) the popup opens with the legend and a Close button", "")
+
+    click_label = "Close"
+    frame()
+    click_label = nil
+    frame()
+
+    check(not drew_text_containing("BeatFx(1)[Top]^BeatFx^") and not drew("Close"),
+      "f3) Close closes it again", #texts .. " texts")
+    check(marker(2).name == "verse", "f4) and nothing was renamed on the way",
+      marker(2).name)
+  end
+end
+
+-- A short docker: the legend used to be dropped below 450 px, so the one place
+-- it was needed most was the one place it was not there.
+do
+  reaper = capture_footer(build_reaper({ active_tab = "rename" }))
+  window_h = 400
+  local ok, err = pcall(dofile, folder .. "steelblue_workspace.lua")
+  if not ok then
+    check(false, "g) the workspace loads in a short docker", tostring(err))
+  else
+    frame()
+    check(drew("Legend"), "g1) a 400 px docker draws the Legend button as well", "")
+
+    click_label = "Legend"
+    frame()
+    click_label = nil
+    frame()
+
+    check(drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
+      "g2) and the legend is reachable there", "")
+  end
+  window_h = 500
 end
 
 print(fails == 0 and "\nALL PASS" or ("\nFAILURES: " .. fails))
