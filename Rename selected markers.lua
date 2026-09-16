@@ -63,7 +63,6 @@ local function run_gui(SB)
     if visible then
       close_window = panel.frame(ctx, SB, {
         show_selection = true,
-        show_reference = true,
         show_close = true,
       })
 

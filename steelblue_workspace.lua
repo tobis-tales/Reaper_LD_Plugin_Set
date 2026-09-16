@@ -404,11 +404,6 @@ local function run_gui(SB)
   -- reserves, which is exactly the window's bottom padding.
   local FOOTER_HEIGHT = 2 + 7 + 26 + 7
 
-  -- Below this the reference lines are dropped and only the fields stay. Tobi's
-  -- docker goes from about 290 px to about 850; the fields alone fit at the
-  -- bottom of that range, the legend needs the room a taller docker gives.
-  local REFERENCE_MIN_HEIGHT = 450
-
   local function loop()
     -- Before the window, on every frame, whatever tab is open: the analyzer is
     -- a live read-out, and it must not stop because someone is renaming markers.
@@ -444,11 +439,9 @@ local function run_gui(SB)
       -- says that. No Close/Cancel button either -- it would close the whole
       -- workspace, and the tab is not a window.
       local tab = tab_by_id(state.active_tab) or TABS[1]
-      local _, window_h = reaper.ImGui_GetWindowSize(ctx)
       PANELS[tab.id].frame(ctx, SB, {
         wide = true,
         show_selection = false,
-        show_reference = type(window_h) == "number" and window_h >= REFERENCE_MIN_HEIGHT,
         entries = entries,
         reason = reason,
         source = source,

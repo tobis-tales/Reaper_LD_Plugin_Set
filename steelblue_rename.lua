@@ -7,7 +7,7 @@
 --   ...
 --   local visible, open, font = SB.begin_window(ctx, TITLE, 620)
 --   if visible then
---     panel.frame(ctx, SB, { show_selection = true, show_reference = true })
+--     panel.frame(ctx, SB, { show_selection = true })
 --     SB.footer(ctx, panel.status())
 --   end
 --   SB.end_window(ctx, visible, font)
@@ -144,9 +144,9 @@ local function step_cue_number(text, delta)
   return format_cue_number(math.max(1, number + delta))
 end
 
--- The legend under the fields. One line per syntax element, aligned by the
--- blanks in the strings themselves, which is why they are drawn as plain
--- labels and not as a table.
+-- The legend behind the "Legend" button. One line per syntax element, aligned
+-- by the blanks in the strings themselves, which is why they are drawn as
+-- plain labels and not as a table.
 local REFERENCE_LINES = {
   "MarkerName    the first selected marker's name, or its cue name if it already has MA syntax",
   "Cue name      name of the cue",
@@ -157,10 +157,6 @@ local REFERENCE_LINES = {
   "Empty field   leaves that element out. Command is a list, not a field",
   "Example       BeatFx(1)[Top]^BeatFx^",
 }
-
--- Below this the two-column legend would overlap itself, so it falls back to
--- one column. The docked workspace is far wider; a floating window is not.
-local TWO_COLUMN_MIN_WIDTH = 1200
 
 -- ------------------------------------------------------------------- panel
 
@@ -504,6 +500,13 @@ function M.create(env)
   -- and End. The host calls after_frame() to let it out.
   local pending = nil
 
+  -- The legend popup. `legend_request` is set on the frame the button was
+  -- pressed and consumed later in the same frame() pass: OpenPopup must run
+  -- once, not on every frame, or the popup is held open and the click-outside
+  -- close -- the way a popup is meant to close -- goes away.
+  local legend_request = false
+  local LEGEND_POPUP_ID = "steelblue_rename_legend"
+
   -- Reading the selection walks the manager's list view and allocates a
   -- 1024-slot array -- far too heavy for 60 fps. Poll a few times a second and
   -- reuse the answer in between; no one clicks faster.
@@ -550,6 +553,11 @@ function M.create(env)
   local function draw_preview(ctx, SB, preview_name)
     SB.section(ctx, "Preview")
 
+    -- Read before the field is submitted: it is a style value, not a measure
+    -- of what was drawn, and taking it here keeps the button exactly as tall
+    -- as the field it stands next to.
+    local field_height = reaper.ImGui_GetFrameHeight(ctx)
+
     reaper.ImGui_SetNextItemWidth(ctx, 460)
     if reaper.APIExists and reaper.APIExists("ImGui_InputTextFlags_ReadOnly") then
       reaper.ImGui_InputText(
@@ -560,6 +568,11 @@ function M.create(env)
       )
     else
       reaper.ImGui_Text(ctx, preview_name)
+    end
+
+    reaper.ImGui_SameLine(ctx)
+    if SB.button(ctx, "Legend", 80, field_height) then
+      legend_request = true
     end
   end
 
@@ -706,42 +719,22 @@ function M.create(env)
     draw_colour_controls(ctx, SB)
   end
 
-  local function draw_reference(ctx, SB, wide)
-    SB.section(ctx, "Reference")
+  -- What the legend popup contains. One column and the introduction sentence in
+  -- both layouts: a popup is its own window and fits nothing, so the two-column
+  -- variant the docked tab used to need is gone with it.
+  local function draw_legend(ctx, SB)
+    SB.section(ctx, "Legend")
 
-    if not wide then
-      imgui_text_wrapped(ctx, "One sequence is generated per marker colour. The default colour (red) is the main cue list.")
-      for _, line in ipairs(REFERENCE_LINES) do
-        SB.label(ctx, line)
-      end
-      return
+    imgui_text_wrapped(ctx, "One sequence is generated per marker colour. The default colour (red) is the main cue list.")
+
+    for _, line in ipairs(REFERENCE_LINES) do
+      SB.label(ctx, line)
     end
 
-    -- Wide: two columns, because eight rows of legend is most of a 450 px
-    -- docker and the width is there for free. Below TWO_COLUMN_MIN_WIDTH the
-    -- long first line would run into the second column, so it stays single.
-    local avail = reaper.ImGui_GetContentRegionAvail(ctx)
-    local half = math.ceil(#REFERENCE_LINES / 2)
+    reaper.ImGui_Separator(ctx)
 
-    if type(avail) ~= "number" or avail < TWO_COLUMN_MIN_WIDTH then
-      for _, line in ipairs(REFERENCE_LINES) do
-        SB.label(ctx, line)
-      end
-      return
-    end
-
-    local column_x = math.floor(avail / 2)
-    local start_x = reaper.ImGui_GetCursorPosX(ctx) or 0
-
-    for index = 1, half do
-      SB.label(ctx, REFERENCE_LINES[index])
-
-      local right = REFERENCE_LINES[index + half]
-      if right then
-        reaper.ImGui_SameLine(ctx)
-        reaper.ImGui_SetCursorPosX(ctx, start_x + column_x)
-        SB.label(ctx, right)
-      end
+    if SB.button(ctx, "Close", 110, 26) then
+      reaper.ImGui_CloseCurrentPopup(ctx)
     end
   end
 
@@ -751,8 +744,6 @@ function M.create(env)
   --   opts.wide            fields side by side instead of stacked
   --   opts.show_selection  the "N markers selected" block -- the workspace
   --                        already says that in its header band
-  --   opts.show_reference  the legend; the workspace hides it when the docker
-  --                        is too short for it
   --   opts.show_close      draw a Close button after Reset
   --   opts.entries         the selection the host has already polled, with
   --   opts.source          its source (and opts.reason); when given, the
@@ -783,11 +774,6 @@ function M.create(env)
       draw_fields_narrow(ctx, SB)
     end
 
-    if opts.show_reference then
-      reaper.ImGui_Separator(ctx)
-      draw_reference(ctx, SB, opts.wide)
-    end
-
     reaper.ImGui_Separator(ctx)
 
     if SB.primary_button(ctx, "Rename selected markers", 260, 30) then
@@ -805,6 +791,22 @@ function M.create(env)
       if SB.button(ctx, "Close", 110, 30) then
         close_requested = true
       end
+    end
+
+    -- The panel owns this popup, unlike the analyzer's ">>>" one, which its
+    -- host owns: nothing outside the panel needs to know the legend exists.
+    -- OpenPopup goes after the buttons so the request the button above just
+    -- set is served in the same pass, and BeginPopup runs on every frame --
+    -- it answers true only while the popup is open, and false again the frame
+    -- a click outside closes it.
+    if legend_request then
+      legend_request = false
+      reaper.ImGui_OpenPopup(ctx, LEGEND_POPUP_ID)
+    end
+
+    if reaper.ImGui_BeginPopup(ctx, LEGEND_POPUP_ID) then
+      draw_legend(ctx, SB)
+      reaper.ImGui_EndPopup(ctx)
     end
 
     return close_requested
