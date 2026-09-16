@@ -26,11 +26,17 @@
   <div class="kicker">REAPER LD Plugin Set</div>
 </header>
 
-<h1>Four tools for cue programming in REAPER</h1>
+<h1>Tools for cue programming in REAPER</h1>
 <p class="lede">Built for lighting designers who write their timecode cues as markers. Each guide is one page — what the plugin is for, how to use it, and the things that are easy to trip over.</p>
 
 <h2>The plugins</h2>
 <div class="cards">
+
+  <a class="card" href="steelblue-ld-tools.html">
+    <b>steelblue LD Tools</b>
+    <span>All of it in one window in REAPER's bottom docker: the live tempo in the header, and Rename, MIDI and Copy as tabs. Opens with REAPER.</span>
+    <em>Start here</em>
+  </a>
 
   <a class="card" href="live-bpm-analyzer.html">
     <b>Live BPM Analyzer</b>
@@ -54,6 +60,17 @@
 
 </div>
 
+<h2>The workspace</h2>
+<p>Since version 2.0 the package holds one more thing, and it is the one most people end up using: <strong>steelblue LD Tools</strong>, a single window that sits in REAPER's bottom docker next to the Mixer.</p>
+<p>It is the same four tools, together. The live tempo read-out lives in its header band and keeps measuring whatever else you are doing; below it are three tabs — <strong>Rename selected markers</strong>, <strong>MIDI notes to markers</strong>, <strong>Copy Markers</strong> — and one status line that belongs to whichever tab is open. What the Region/Marker Manager has selected is read once and shown at the top, so all three tabs see the same thing.</p>
+<figure>
+  <img src="img/workspace-01-rename.png" alt="The steelblue LD Tools window docked at the bottom of REAPER, with the Rename tab open">
+  <figcaption>The workspace in the bottom docker, Rename tab open.</figcaption>
+</figure>
+<p><strong>It opens with REAPER.</strong> The installer writes a small marked block into <code>__startup.eel</code> in REAPER's Scripts folder, so the window is there on every start — no shortcut to press, nothing to remember. If you would rather not have that, delete the block between the two <code>// steelblue LD Tools: autostart</code> comment lines.</p>
+<p>To open or close it by hand, run <code>steelblue_workspace.lua</code> from the Action List, or use the shortcut you assigned during install. It is a switch: running it while the window is open closes it.</p>
+<p>The four single plugins are still installed and still work exactly as they always have — <a href="steelblue-ld-tools.html">the workspace guide</a> has the details.</p>
+
 <h2>Installing</h2>
 <p>One script does the whole job. It takes about a minute.</p>
 
@@ -73,8 +90,8 @@
 
 <li>
 <h3>Give each plugin a shortcut</h3>
-<p>The installer opens REAPER's shortcut dialog once per plugin. Press whatever keys suit you — a script is not allowed to set a key binding, it can only open that dialog, so the choice is genuinely yours.</p>
-<p>Skipping is fine. Everything also runs from <kbd>Actions</kbd> → <kbd>Show Action List</kbd> under the plugin's file name, and you can add shortcuts there whenever you like.</p>
+<p>The installer registers <strong>five actions</strong> — the four plugins and <code>steelblue_workspace.lua</code>, which is the LD Tools window — and opens REAPER's shortcut dialog once for each. Press whatever keys suit you; a script is not allowed to set a key binding, it can only open that dialog, so the choice is genuinely yours.</p>
+<p>Skipping is fine. Everything also runs from <kbd>Actions</kbd> → <kbd>Show Action List</kbd> under the plugin's file name, and you can add shortcuts there whenever you like. The workspace opens on its own anyway.</p>
 </li>
 
 <li>
@@ -94,7 +111,7 @@
 
 <footer>
   <span>steelblue studios — REAPER LD Plugin Set</span>
-  <span class="req">Requires REAPER 7 · tested on macOS and Windows</span>
+  <span class="req">Requires REAPER 7 · ruler lanes need 7.72 · tested on macOS and Windows</span>
 </footer>
 
 </div>

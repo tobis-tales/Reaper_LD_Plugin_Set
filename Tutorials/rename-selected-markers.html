@@ -16,7 +16,7 @@
 
 <h1>Rename selected markers</h1>
 <p class="lede">Builds MA-Tools cue names for a whole set of markers at once, from parts you switch on and off — instead of typing <code>BeatFx(1)[Top]^BeatFx^</code> forty times by hand.</p>
-<div class="shortcut">Use the shortcut you assigned during install — or run it from <kbd>Actions</kbd> → <kbd>Show Action List</kbd></div>
+<div class="shortcut">A tab in <a href="steelblue-ld-tools.html">steelblue LD Tools</a> — or, as its own window, the shortcut you assigned during install, or <kbd>Actions</kbd> → <kbd>Show Action List</kbd></div>
 
 <h2>What it is for</h2>
 <p>Your markers arrive from somewhere — you dropped them by ear, or the MIDI plugin created them. Now they need to become cues the timecode trigger understands. This window assembles the syntax for you and applies it to every selected marker in one go, with a live preview so you see the result before you commit.</p>
@@ -29,30 +29,43 @@
 <h3>Select the markers, then click into the arrange</h3>
 <p>Pick the markers in the <kbd>Region/Marker Manager</kbd>. Then click once in the arrange view.</p>
 <div class="note warn">
-<p><strong>Do not skip that click.</strong> While the Region/Marker Manager has keyboard focus it eats the shortcut — the window will not open, and your selection gets cleared on top of it. One click in the arrange and the shortcut works. Your selection stays; only its highlight fades while the manager is inactive.</p>
+<p><strong>Do not skip that click</strong> if you start the plugin from a shortcut. While the Region/Marker Manager has keyboard focus it eats the shortcut — the window will not open, and your selection gets cleared on top of it. One click in the arrange and the shortcut works. Your selection stays; only its highlight fades while the manager is inactive.</p>
+<p>The workspace tab has no such problem: it is already open, so there is no shortcut to swallow.</p>
 </div>
 </li>
 
 <li>
-<h3>Start the plugin and build the name</h3>
-<p>Run <strong>Rename selected markers</strong> — with the shortcut you assigned, or from the Action List. Every switch you flip changes the preview at the top immediately.</p>
+<h3>Build the name</h3>
+<p>Open the <strong>Rename selected markers</strong> tab, or run the plugin in its own window. Every field you touch changes the preview at the top immediately, and the preview shows what the <em>first</em> selected marker will be called.</p>
 <figure>
-  <img src="img/rename-01a-window.png" alt="The Rename selected markers window with the preview field, the syntax switches and the reference list">
-  <figcaption>The preview shows what the first selected marker will be called.</figcaption>
+  <img src="img/rename-03-window.png" alt="The Rename selected markers window: the preview field with the Legend button beside it, the cue name and sequence name fields, the cue number row, the Command list and the colour options">
+  <figcaption>Preview at the top, <strong>Legend</strong> beside it, then the fields.</figcaption>
+</figure>
+<p>If the markers already carry MA-Tools syntax, the fields are filled in from the first one when the window opens. Running the plugin twice therefore cannot wrap a name inside itself: <code>Kick(1)[Top]^Kick^</code> stays <code>Kick(1)[Top]^Kick^</code> and does not become <code>Kick(1)[Top]^Kick^(1)[Top]^…^</code>.</p>
+</li>
+
+<li>
+<h3>Press Legend when a field is unclear</h3>
+<p>The <strong>Legend</strong> button next to the preview explains every part of the syntax, one line each. In the single window it opens as a small popup under the button; in the workspace it takes over the tab until you press <strong>Close</strong> — a docker is not tall enough for a popup that size.</p>
+<figure>
+  <img src="img/rename-05-legend.png" alt="The legend listing MarkerName, Cue name, CueNumber, Multiple, Cmd, Sequence, the empty-field rule and an example">
+  <figcaption>The same eight lines in both windows.</figcaption>
 </figure>
 </li>
 
 <li>
 <h3>Know what <code>MarkerName</code> does</h3>
-<p><code>MarkerName</code> in the cue name field is not a literal name — it is a <strong>placeholder for whatever the marker is already called</strong>. Leave it there and a marker called <em>verse</em> becomes <code>verse(1)[Go]^verse^</code>, while <em>drop</em> becomes <code>drop(1)[Go]^drop^</code>. Each marker keeps its own name inside the new syntax.</p>
+<p><code>MarkerName</code> in the cue name field is not a literal name — it is a <strong>placeholder for whatever the marker is already called</strong>. Leave it there and a marker called <em>verse</em> becomes <code>verse(1)[Top]^verse^</code>, while <em>drop</em> becomes <code>drop(1)[Top]^drop^</code>. Each marker keeps its own name inside the new syntax.</p>
 <p>Type an actual word instead — say <code>Crash</code> — and every selected marker gets that same name.</p>
+<p>On a marker that already has MA-Tools syntax, <code>MarkerName</code> resolves to its <em>cue name</em>, not to the whole string. That is what keeps a second run from nesting the syntax.</p>
 </li>
 
 <li>
 <h3>Number repeated cues</h3>
+<p><strong>Cue number</strong> switches the number on, and the <code>-</code> and <code>+</code> buttons beside the field step it by one.</p>
 <p>Switch on <strong>Create multiple cues in timeline order</strong> when the same cue is fired several times. <strong>How many cues</strong> sets how far the counter runs before it starts over.</p>
 <figure>
-  <img src="img/rename-02a-window.png" alt="The window with Create multiple cues switched on and How many cues set to 3">
+  <img src="img/rename-04-numbering.png" alt="The window with Create multiple cues switched on and How many cues set to 3">
   <figcaption>Four markers selected, the counter set to 3.</figcaption>
 </figure>
 <figure>
@@ -63,8 +76,15 @@
 </li>
 
 <li>
+<h3>Decide about the colour</h3>
+<p><strong>Also set colour</strong> is on, and colours every marker in the run the same. <strong>Random</strong> picks one fresh colour for this run; <strong>Last used</strong> takes the one from the previous run, so a second block joins the same sequence. The swatch beside the two shows which colour a run would use.</p>
+<p>Untick it and the marker colours are left exactly as they are.</p>
+</li>
+
+<li>
 <h3>Rename</h3>
-<p>Click <strong>Rename selected markers</strong>. The status line reports how many were changed. Marker positions and colours stay exactly as they were — only the names change.</p>
+<p>Click <strong>Rename selected markers</strong>. The status line reports how many were changed. Marker positions stay exactly as they were, the markers keep their ruler lane, and the colours only change if you asked for it.</p>
+<p><strong>Reset to defaults</strong> puts every field and switch back to the state the window opens in.</p>
 </li>
 
 </ol>
@@ -73,16 +93,19 @@
 
 <table>
   <tr><th>Part</th><th>What it does</th></tr>
-  <tr><td><code>MarkerName</code></td><td>Placeholder for the marker's existing name</td></tr>
+  <tr><td><code>MarkerName</code></td><td>Placeholder for the marker's existing name — or for its cue name, if it already carries MA-Tools syntax</td></tr>
   <tr><td>Cue name</td><td>The name of the cue</td></tr>
   <tr><td><code>(CueNumber)</code></td><td>Cue number — for triggering the same cue repeatedly</td></tr>
   <tr><td>Multiple</td><td>Counts the cue number up in timeline order, and wraps</td></tr>
-  <tr><td><code>[Cmd]</code></td><td>TC trigger command: <code>Top</code>, <code>On</code>, <code>Off</code>. Default is <code>Go</code></td></tr>
+  <tr><td><code>[Cmd]</code></td><td>TC trigger command. A list, not a field: <code>Go</code>, <code>Top</code>, <code>Flash</code>. Default is <code>Top</code></td></tr>
   <tr><td><code>^Sequence^</code></td><td>Name of the sequence. Only needs to be given once</td></tr>
+  <tr><td>Empty field</td><td>Leaves that element out of the name entirely</td></tr>
 </table>
 
+<p>A marker that already carries some other command keeps it: it turns up as a fourth entry in the list and stays selected until you pick one of the three.</p>
+
 <div class="note">
-<p><strong>One sequence per marker colour.</strong> Colour is how you split cue lists: the default colour (red) is the main cue list, and every other colour generates its own sequence. Colour your markers before renaming, not after.</p>
+<p><strong>One sequence per marker colour.</strong> Colour is how you split cue lists: the default colour (red) is the main cue list, and every other colour generates its own sequence. That is what <strong>Also set colour</strong> is for — colour the block in the same run that names it.</p>
 </div>
 
 <h2>Good to know</h2>
@@ -95,7 +118,7 @@
 
 <footer>
   <span>steelblue studios — Rename selected markers</span>
-  <span class="req">Requires ReaImGui and JS_ReaScriptAPI</span>
+  <span class="req">Requires REAPER 7 · ruler lanes need 7.72 · tested on macOS and Windows</span>
 </footer>
 
 </div>

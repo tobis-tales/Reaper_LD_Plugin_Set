@@ -15,12 +15,21 @@
 </header>
 
 <h1>MIDI notes to project markers</h1>
-<p class="lede">Turns every MIDI note into a project marker, named after the note and coloured by pitch — so you can write your cue rhythm as MIDI and get the markers for free.</p>
-<div class="shortcut">Use the shortcut you assigned during install — or run it from <kbd>Actions</kbd> → <kbd>Show Action List</kbd></div>
+<p class="lede">Turns every MIDI note into a project marker — one ruler lane per track, named after the track, coloured to match it. Write your cue rhythm as MIDI and get the markers for free.</p>
+<div class="shortcut">A tab in <a href="steelblue-ld-tools.html">steelblue LD Tools</a> — or, as its own window, the shortcut you assigned during install, or <kbd>Actions</kbd> → <kbd>Show Action List</kbd></div>
 
 <h2>What it is for</h2>
 <p>Placing cues by ear, one marker at a time, is slow and never quite tight. Playing them in as MIDI is fast, quantises to the grid, and can be edited like music. This plugin takes that MIDI item and puts a marker at the start of every note.</p>
-<p>Each distinct note name gets its own colour, so a kick pattern and a hat pattern are visually separate on the ruler — and since colour is what splits cue lists in MA-Tools, the sequences fall out of that automatically.</p>
+<p>Each track becomes one sequence: its markers go into their own ruler lane, carry the track's colour, and are named <code>Note(number)[Command]^Track^</code>. A kick track and a hat track are then two clean rows on the ruler and two separate cue lists on the console.</p>
+
+<h2>What the names look like</h2>
+<p>The lane and the sequence are named after the track, with anything in brackets stripped — a track called <strong>Kick (12)</strong> gives lane and sequence <code>Kick</code>. The bracket stays on the track itself, because the number in it is the MA sequence number.</p>
+<p>The cue number is the <strong>rank of the pitch</strong> within that track, counted upwards. Four different notes give cues 1 to 4; five hits of the same note all give cue 1, which is exactly right — that is one cue fired five times.</p>
+<table>
+  <tr><th>Track</th><th>Notes</th><th>Markers</th></tr>
+  <tr><td><code>Kick (12)</code></td><td>C1 C2 C1 C3</td><td><code>C1(1)[Top]^Kick^</code> · <code>C2(2)[Top]^Kick^</code> · <code>C1(1)[Top]^Kick^</code> · <code>C3(3)[Top]^Kick^</code></td></tr>
+</table>
+<p>If the track has custom MIDI note names, those are used as the cue name instead of the pitch — but the rank still comes from the pitch.</p>
 
 <h2>Step by step</h2>
 
@@ -32,18 +41,28 @@
 </li>
 
 <li>
-<h3>Start the plugin</h3>
-<p>Run <strong>MIDI notes to project markers</strong> — with the shortcut you assigned, or from the Action List. The window tells you how many items are currently selected, so you can check before committing.</p>
+<h3>Open the tab, or start the plugin</h3>
+<p>Use the <strong>MIDI notes to markers</strong> tab, or run the plugin in its own window. It tells you how many items are currently selected, so you can check before committing.</p>
 <figure>
-  <img src="img/midi-01a-window.png" alt="The MIDI notes to project markers window with MA-Tools syntax switched on and one item selected">
-  <figcaption>The line under the switch previews the naming, and the count at the bottom tells you what you are about to convert.</figcaption>
+  <img src="img/midi-03-window.png" alt="The MIDI notes to project markers window: the MA-Tools syntax switch with its example line, the Command list, the ruler lanes section with Replace existing markers, and the two scope buttons">
+  <figcaption>The example line under the switch previews the naming, and the count at the bottom tells you what you are about to convert.</figcaption>
 </figure>
 </li>
 
 <li>
 <h3>Choose the naming</h3>
-<p><strong>MA-Tools syntax</strong> is on by default: a C4 becomes <code>C4(1)[Top]^C4^</code>, ready to trigger. Switch it off if you just want the plain note name — <code>C4</code> — for example when you intend to run <em>Rename selected markers</em> over them afterwards.</p>
-<p>If the track has custom MIDI note names, those are used instead of the pitch. Name your notes <em>KickStart</em> and <em>Hihat</em> in REAPER and the markers arrive already carrying those names.</p>
+<p><strong>MA-Tools syntax</strong> is on by default: a C4 on a track called <em>Kick</em> becomes <code>C4(1)[Top]^Kick^</code>, ready to trigger. Switch it off if you just want the plain note name — <code>C4</code> — for example when you intend to run <em>Rename selected markers</em> over them afterwards.</p>
+<p><strong>Command</strong> is a list: <code>Go</code>, <code>Top</code>, <code>Flash</code>. It is what goes in the square brackets, and the example line shows the result as you change it.</p>
+</li>
+
+<li>
+<h3>Check the ruler lanes</h3>
+<p>Every track gets its own ruler lane, named after the track. The lane is created if it is not there yet, and it takes the track's colour, so the markers and the lane match.</p>
+<p><strong>Replace existing markers in these lanes</strong> is on, and it empties each lane before writing into it. Leave it on while you are still adjusting the MIDI — otherwise every run stacks another full set of markers on top of the last.</p>
+<div class="note warn">
+<p><strong>Two tracks with the same name are a problem,</strong> because both would produce <code>^Kick^</code> and the console could not tell the sequences apart. The plugin notices and asks before it writes anything. <em>Kick (12)</em> and <em>Kick (13)</em> count as the same name — the bracket is stripped.</p>
+</div>
+<p>Ruler lanes need <strong>REAPER 7.72 or newer</strong>. On an older REAPER the plugin says so in that spot and writes the names and colours without lanes; everything else is unchanged.</p>
 </li>
 
 <li>
@@ -52,9 +71,10 @@
   <tr><td><strong>All MIDI items in the project</strong></td><td>Every MIDI item, regardless of selection.</td></tr>
   <tr><td><strong>Only selected MIDI items</strong></td><td>Just what you picked in step 1.</td></tr>
 </table>
+<p>Either button starts the run straight away. A box afterwards says what was created.</p>
 <figure>
-  <img src="img/midi-02b-manager.png" alt="The manager listing the created markers, each named after its note in MA-Tools syntax">
-  <figcaption>Markers created — one per note, named after the note, each note name in its own colour.</figcaption>
+  <img src="img/midi-04-lanes.png" alt="The REAPER ruler with one named lane per track, each lane's markers in the track colour, and the Region/Marker Manager listing them in MA-Tools syntax">
+  <figcaption>One lane per track, each in the track's colour, names in MA-Tools syntax.</figcaption>
 </figure>
 </li>
 
@@ -73,7 +93,7 @@
 
 <footer>
   <span>steelblue studios — MIDI notes to project markers</span>
-  <span class="req">Requires ReaImGui</span>
+  <span class="req">Requires REAPER 7 · ruler lanes need 7.72 · tested on macOS and Windows</span>
 </footer>
 
 </div>

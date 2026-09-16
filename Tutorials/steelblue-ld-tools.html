@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>steelblue LD Tools — steelblue studios</title>
+<link rel="stylesheet" href="steelblue.css">
+</head>
+<body>
+<div class="page">
+
+<header class="brand">
+  <img src="mark.svg" alt="" width="34" height="30">
+  <div class="wordmark"><b>steelblue</b><span>STUDIOS</span></div>
+  <div class="kicker">How to use</div>
+</header>
+
+<h1>steelblue LD Tools</h1>
+<p class="lede">One window in REAPER's bottom docker that holds the whole set: the live tempo read-out in its header band, and Rename, MIDI and Copy as tabs. It opens with REAPER and stays open.</p>
+<div class="shortcut">Already there when REAPER starts — or use the shortcut you assigned during install, or run <code>steelblue_workspace.lua</code> from <kbd>Actions</kbd> → <kbd>Show Action List</kbd></div>
+
+<h2>What it is for</h2>
+<p>The four plugins each open a window, and each window has to be started, moved out of the way, and started again next time. During programming that is most of the work: you are in the Region/Marker Manager and the arrange the whole evening, and the tool you need is never on screen.</p>
+<p>The workspace turns that around. It lives in REAPER's bottom docker, in the same row of tabs as the Mixer, and it is simply always there. The tempo keeps being measured while you rename markers, and the Region/Marker Manager selection is read once and shown at the top, so every tab sees the same thing.</p>
+
+<h2>Step by step</h2>
+
+<ol class="steps">
+
+<li>
+<h3>Find it after the install</h3>
+<p>It is in the bottom docker. If the docker is closed, open it with <kbd>View</kbd> → <kbd>Show Docker</kbd> — the workspace is one of the tabs in there, next to the Mixer, under <strong>steelblue LD Tools</strong>.</p>
+<p>It always docks. Drag the docker's top edge to give it the height you want; around 400 px is comfortable.</p>
+<figure>
+  <img src="img/workspace-01-rename.png" alt="The steelblue LD Tools window in REAPER's bottom docker: header band with the live BPM read-out, three tabs, and the Rename tab open">
+  <figcaption>The header band, the three tabs, and the status line at the bottom.</figcaption>
+</figure>
+</li>
+
+<li>
+<h3>Read the header band</h3>
+<p>On the left, the <strong>live BPM</strong> of whatever item the analyzer has picked, with its confidence bar next to it. The tick box beside the bar pauses the analysis — the number then stays on the last reading and turns grey, so you can see it is paused rather than broken.</p>
+<p><strong>Precision analyze</strong> starts the long measurement; the bar becomes its progress while it runs. <code>›››</code> opens everything else the analyzer can do.</p>
+<p>On the right, what the Region/Marker Manager currently has selected — the one reading all three tabs work from.</p>
+</li>
+
+<li>
+<h3>Open the analyzer's popup with <code>›››</code></h3>
+<p>Raw value, both confidence figures, the project tempo, the <strong>Source</strong> line naming the item being measured, and when it was last analysed. Then <strong>Window seconds</strong>, <strong>Min BPM</strong>, <strong>Max BPM</strong>, and the buttons: <strong>Analyze now</strong>, <strong>Half</strong>, <strong>Double</strong>, <strong>Set project tempo</strong>, <strong>Clear</strong>.</p>
+<p>The analyzer's own status line sits at the bottom of the popup — that is where it tells you it has skipped a timecode track. Click anywhere outside the popup to close it.</p>
+<figure>
+  <img src="img/workspace-03-bpm.png" alt="The ››› popup open under the header band, showing raw BPM, confidence, project tempo, the Source line, the range fields and the analyze buttons">
+  <figcaption>Everything the header band has no room for.</figcaption>
+</figure>
+</li>
+
+<li>
+<h3>Work in the tabs</h3>
+<p>Three tabs: <strong>Rename selected markers</strong>, <strong>MIDI notes to markers</strong>, <strong>Copy Markers</strong>. Each one is the same tool its own window holds, laid out across the width of the docker instead of stacked.</p>
+<p>What you type stays where it is. Switch to another tab and back, and the half-finished cue name is still in its field.</p>
+<figure>
+  <img src="img/workspace-02-copy.png" alt="The Copy Markers tab: edit cursor and target fields on the left, the list of all markers with tick boxes on the right">
+  <figcaption>The Copy tab — controls on the left, the marker list on the right.</figcaption>
+</figure>
+</li>
+
+<li>
+<h3>Read the status line</h3>
+<p>One line at the very bottom, and it belongs to the tab that is open. Rename reports how many markers it changed there, Copy how many it copied, MIDI what it created. The other tabs stay quiet.</p>
+</li>
+
+</ol>
+
+<h2>What is where</h2>
+
+<table>
+  <tr><th>Part</th><th>What it holds</th></tr>
+  <tr><td>Header, left</td><td>Live BPM, confidence bar, the pause switch, <strong>Precision analyze</strong>, <code>›››</code></td></tr>
+  <tr><td>Header, right</td><td>How many markers the Region/Marker Manager has selected, and whether the order is known</td></tr>
+  <tr><td><code>›››</code> popup</td><td>Raw, confidence, project tempo, Source, last analysis, window and range, Analyze now, Half, Double, Set project tempo, Clear</td></tr>
+  <tr><td>Tabs</td><td>Rename selected markers · MIDI notes to markers · Copy Markers</td></tr>
+  <tr><td>Status line</td><td>What the open tab just did</td></tr>
+</table>
+
+<h2>Good to know</h2>
+
+<h3>It opens with REAPER, and you can stop that</h3>
+<p>The installer puts a marked block into <code>__startup.eel</code> in REAPER's own Scripts folder — the file REAPER runs at every start. If you would rather open the window yourself, delete the block between the two <code>// steelblue LD Tools: autostart</code> comment lines. The action stays in the Action List either way.</p>
+
+<h3>The action is a switch</h3>
+<p>Running <code>steelblue_workspace.lua</code> while the window is open closes it. Run it again and it comes back. That is also what the shortcut does, if you assigned one during install.</p>
+
+<h3>The four single plugins are unchanged</h3>
+<p>They are still installed, still have their own actions and their own shortcuts, and still open their own windows. Nothing in the workspace replaces them — use whichever suits the moment. Their guides describe the same controls; only the layout differs.</p>
+
+<h3>No Close or Cancel inside a tab</h3>
+<p>A tab is not a window, so it has no button that would close one. Close the workspace by closing its docker tab, or by running the action again.</p>
+
+<h3>The docker slot has only been verified on macOS</h3>
+<p>The window asks REAPER for the bottom docker by number, and that number has been checked on macOS. It should be the same on Windows and nothing suggests otherwise — but nobody has run it there yet, so if the window turns up somewhere unexpected, that is where to look.</p>
+
+<h3>It needs ReaImGui</h3>
+<p>The workspace <em>is</em> a ReaImGui window, so without that extension it will not start and says so. The four single plugins fall back to plain REAPER dialogs instead, so nobody is left without a way to work.</p>
+
+<footer>
+  <span>steelblue studios — steelblue LD Tools</span>
+  <span class="req">Requires REAPER 7 · ruler lanes need 7.72 · tested on macOS and Windows</span>
+</footer>
+
+</div>
+</body>
+</html>

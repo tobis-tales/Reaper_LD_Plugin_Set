@@ -16,7 +16,7 @@
 
 <h1>Copy Markers</h1>
 <p class="lede">Copies a set of markers to another position on the timeline — keeping their spacing, their names and their colours.</p>
-<div class="shortcut">Use the shortcut you assigned during install — or run it from <kbd>Actions</kbd> → <kbd>Show Action List</kbd></div>
+<div class="shortcut">A tab in <a href="steelblue-ld-tools.html">steelblue LD Tools</a> — or, as its own window, the shortcut you assigned during install, or <kbd>Actions</kbd> → <kbd>Show Action List</kbd></div>
 
 <h2>What it is for</h2>
 <p>You have programmed a block of cues — say a chorus — and the same block comes back later in the song. Instead of rebuilding it, select those markers once and drop a copy wherever you need it. The distances between them stay exactly as they were.</p>
@@ -37,19 +37,26 @@
 <li>
 <h3>Click once into the arrange</h3>
 <div class="note warn">
-<p><strong>This step is easy to miss.</strong> As long as the Region/Marker Manager has keyboard focus, it swallows the shortcut: the window will not appear, and your marker selection gets cleared. Click anywhere in the arrange view first, then press the shortcut.</p>
+<p><strong>This step is easy to miss</strong> if you start the plugin from a shortcut. As long as the Region/Marker Manager has keyboard focus, it swallows the shortcut: the window will not appear, and your marker selection gets cleared. Click anywhere in the arrange view first, then press the shortcut.</p>
 <p>Your selection survives that click. The highlight may go pale once the manager is no longer the active window — that is the system dimming it, not the selection being lost. The plugin still reads it correctly.</p>
+<p>The workspace tab is already open, so none of this applies there.</p>
 </div>
 </li>
 
 <li>
-<h3>Start the plugin</h3>
-<p>Run <strong>Copy Markers</strong> — with the shortcut you assigned, or from the Action List. The window shows how many markers are selected, and where your edit cursor currently sits, in bars and in timecode.</p>
-<p>You can leave the window open while you work: change the selection in the manager or move the edit cursor, and the display follows.</p>
+<h3>Check the list</h3>
+<p>Open the <strong>Copy Markers</strong> tab, or run the plugin in its own window. Beside the controls is a <strong>list of every marker in the project</strong>, each with a tick box, its position, its name and its ruler lane. What is ticked is what gets copied.</p>
+<p>The ticks follow the Region/Marker Manager: select there, and the list follows along. The moment you tick a box yourself, it stops following and the ticks are yours.</p>
 <figure>
-  <img src="img/copy-01a-window.png" alt="The Copy Markers window: 3 markers selected, edit cursor at measure 19.3.00, target position fields and four copy buttons">
-  <figcaption>The count at the top is read live — it follows what you do in the manager.</figcaption>
+  <img src="img/copy-03-window.png" alt="The Copy Markers window: edit cursor and target position at the top, then the marker list with tick boxes, the Use selection and Clear selection buttons and the count, then the copy buttons">
+  <figcaption>The list is the selection. The count under it says how many are ticked.</figcaption>
 </figure>
+<table>
+  <tr><td><strong>Use selection</strong></td><td>Ticks exactly what the manager has selected, and goes back to following it.</td></tr>
+  <tr><td><strong>Clear selection</strong></td><td>Unticks everything and leaves the ticks to you.</td></tr>
+  <tr><td><strong>N selected</strong></td><td>How many are ticked right now — that is what the next copy will produce.</td></tr>
+</table>
+<p>You can leave the window open while you work: change the selection in the manager or move the edit cursor, and the display follows.</p>
 </li>
 
 <li>
@@ -60,16 +67,12 @@
   <tr><td><strong>Copy to measure.beats</strong></td><td>For a musical position: type something like <code>19.3.00</code>.</td></tr>
   <tr><td><strong>Copy to hh:mm:ss:ff</strong></td><td>For a timecode position: type something like <code>00:00:34:20</code>.</td></tr>
 </table>
-<p><strong>Refresh from cursor</strong> fills both fields with the current cursor position, so you can nudge the value from there instead of typing it out.</p>
+<p>Leave a target field empty and it follows the edit cursor, showing where a copy would land as you move it. Type a position into it and it stays pinned there until you clear it again.</p>
 </li>
 
 <li>
 <h3>Copy</h3>
-<p>The status line at the bottom confirms what happened. The copies carry the original names and colours.</p>
-<figure>
-  <img src="img/copy-02a-window.png" alt="The Copy Markers window with a green status line reading 3 markers copied">
-  <figcaption>Green means done.</figcaption>
-</figure>
+<p>The status line confirms what happened. The copies carry the original names, colours and ruler lanes.</p>
 <figure>
   <img src="img/copy-02b-manager.png" alt="The manager now lists the original five markers plus three copies named intro, verse and buildup further along">
   <figcaption>The copies M6–M8 arrived at bar 14, 16 and 18 — two bars apart, exactly like the originals at 1, 3 and 5.</figcaption>
@@ -84,14 +87,17 @@
 <p>The first of your selected markers — the earliest one on the timeline, not the first one you clicked — lands exactly on the target position. Everything else keeps its distance to it. So the block arrives as a block.</p>
 
 <h3>The selection is read from the manager, not from the arrange</h3>
-<p>Markers you clicked in the arrange view are not the same selection as the manager's list. If the manager is closed, the plugin falls back to the arrange selection and says so in the window.</p>
+<p>Markers you clicked in the arrange view are not the same selection as the manager's list. If the manager is closed, the plugin falls back to the arrange selection and says so in the window. Either way it only ever sets the ticks — the ticks are what gets copied.</p>
+
+<h3>Copies keep their ruler lane</h3>
+<p>A marker in the <em>Kick</em> lane arrives in the <em>Kick</em> lane, so a copied block of cues stays on the same row of the ruler and in the same sequence. The lane each marker is in is shown in its row in the list.</p>
 
 <h3>It does not need JS_ReaScriptAPI</h3>
 <p>On REAPER 7.62 and newer, Copy Markers works without that extension. It sorts by timeline position anyway, so it never needs to know in which order you clicked. (Rename selected markers does need it — that one cares about your click order.)</p>
 
 <footer>
   <span>steelblue studios — Copy Markers</span>
-  <span class="req">Requires ReaImGui</span>
+  <span class="req">Requires REAPER 7 · ruler lanes need 7.72 · tested on macOS and Windows</span>
 </footer>
 
 </div>

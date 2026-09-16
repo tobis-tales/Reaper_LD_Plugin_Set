@@ -16,7 +16,7 @@
 
 <h1>Live BPM Analyzer</h1>
 <p class="lede">Reads the real tempo of a finished song from the audio itself, to two decimal places — and sets the project tempo to it without shifting anything you have already placed.</p>
-<div class="shortcut">Use the shortcut you assigned during install — or run it from <kbd>Actions</kbd> → <kbd>Show Action List</kbd></div>
+<div class="shortcut">Already in the header band of <a href="steelblue-ld-tools.html">steelblue LD Tools</a> — or, as its own window, the shortcut you assigned during install, or <kbd>Actions</kbd> → <kbd>Show Action List</kbd></div>
 
 <h2>What it is for</h2>
 <p>Your grid has to sit on the track, or every cue you place drifts. The tempo printed on a release, or reported by a DJ tool, is usually rounded to a whole number — and a TV edit is often time-compressed by a fraction of a percent on top of that. Half a BPM out over three minutes is several beats of drift by the end.</p>
@@ -28,21 +28,24 @@
 
 <li>
 <h3>Select the song item</h3>
-<p>Click the audio item in the arrange view. If nothing is selected, the plugin looks for the item under the play cursor.</p>
+<p>Click the audio item in the arrange view. If nothing is selected, the plugin looks under the edit cursor, and failing that takes the only audio item in the project.</p>
+<p>The <strong>Source</strong> line tells you what it settled on — track number, track name, take. Check that line before you trust a number; it is the difference between measuring the song and measuring something else on the timeline.</p>
 </li>
 
 <li>
 <h3>Start the plugin</h3>
 <p>Run <strong>Live BPM Analyzer</strong> — with the shortcut you assigned, or from the Action List. It starts reading immediately, updating as playback runs.</p>
 <figure>
-  <img src="img/bpm-01-analyze.png" alt="The Live BPM Analyzer window reading 128.00 BPM at 95 percent confidence next to the audio item in the arrange">
-  <figcaption>Reading a song at 128 BPM. The bar under the number is the confidence.</figcaption>
+  <img src="img/bpm-03-window.png" alt="The Live BPM Analyzer window: the tempo in large figures with a confidence bar, the Raw, Confidence, Project tempo and Source lines, the range fields and the analyze buttons">
+  <figcaption>Reading a song at 128 BPM. The bar under the number is the confidence; the Source line names the item being measured.</figcaption>
 </figure>
+<p>In the workspace it is the block at the top left instead — the number, the bar, a switch that pauses the analysis, <strong>Precision analyze</strong>, and <code>›››</code> for everything on this page.</p>
 </li>
 
 <li>
 <h3>Press Precision analyze for the real answer</h3>
 <p>Live mode looks at a short rolling window and is meant for a quick glance while the track plays. <strong>Precision analyze</strong> takes up to two minutes of audio out of the middle of the song — skipping intro and outro, where the beat is least reliable — and measures across it.</p>
+<p>It reads that audio a piece at a time while REAPER keeps running, so the window does not freeze. A progress bar replaces the confidence bar while it works, and the button is greyed out until it finishes.</p>
 <p>Live updating switches itself off afterwards, so the result stays on screen instead of being overwritten a moment later.</p>
 </li>
 
@@ -76,12 +79,16 @@
 <h3>Window seconds, Min and Max BPM</h3>
 <p>Leave these alone unless you have a reason. Narrowing Min/Max around a tempo you already suspect helps on difficult material — set 120 to 140 if you know it is house-ish, and the octave question disappears by itself.</p>
 
+<h3>It walks around timecode tracks</h3>
+<p>An LTC or SMPTE track is a square wave with a flawless period, and any tempo detector will lock onto it and report something very confident and completely useless. So a candidate whose track name, take name or item notes look like timecode — <em>LTC</em>, <em>SMPTE</em>, <em>MTC</em>, <em>timecode</em>, <em>TC</em> — loses against every other item, even when it is the one you selected.</p>
+<p>If that is genuinely what you wanted measured, the status line says it has been skipped, and the Source line shows what it took instead.</p>
+
 <h3>What "130" on the label usually means</h3>
 <p>It usually means "about 130". If your grid drifts on a track that is supposedly a round number, measure it: released material sitting at 130.97 rather than 130.00 is entirely normal, and that difference is worth about seven beats of drift over three minutes.</p>
 
 <footer>
   <span>steelblue studios — Live BPM Analyzer</span>
-  <span class="req">Requires ReaImGui</span>
+  <span class="req">Requires REAPER 7 · ruler lanes need 7.72 · tested on macOS and Windows</span>
 </footer>
 
 </div>
