@@ -1811,9 +1811,12 @@ function M.create(env)
     reaper.ImGui_Separator(ctx)
     SB.section(ctx, "Analyze")
 
+    -- Grey while a pass runs, like the header block: the bar below says why.
+    reaper.ImGui_BeginDisabled(ctx, precision_job ~= nil)
     if SB.primary_button(ctx, "Precision analyze", 145) then
       on_precision()
     end
+    reaper.ImGui_EndDisabled(ctx)
 
     reaper.ImGui_SameLine(ctx)
     local _
