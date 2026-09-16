@@ -507,6 +507,12 @@ function M.create(env)
   local legend_request = false
   local LEGEND_POPUP_ID = "steelblue_rename_legend"
 
+  -- Where the popup hangs: the screen position just before the "Legend"
+  -- button is drawn, and the button's own height, so the popup can be placed
+  -- directly under it (the workspace's ">>>" popup uses the same anchor
+  -- pattern -- see steelblue_workspace.lua draw_bpm_popup).
+  local legend_anchor_x, legend_anchor_y, legend_anchor_h = nil, nil, nil
+
   -- Reading the selection walks the manager's list view and allocates a
   -- 1024-slot array -- far too heavy for 60 fps. Poll a few times a second and
   -- reuse the answer in between; no one clicks faster.
@@ -571,6 +577,15 @@ function M.create(env)
     end
 
     reaper.ImGui_SameLine(ctx)
+
+    -- Captured every frame, used only on the frame the click below sets
+    -- legend_request -- by the time that frame's OpenPopup runs, the cursor
+    -- has moved on, so the position has to be kept from here.
+    local anchor_x, anchor_y = reaper.ImGui_GetCursorScreenPos(ctx)
+    if type(anchor_x) == "number" and type(anchor_y) == "number" then
+      legend_anchor_x, legend_anchor_y, legend_anchor_h = anchor_x, anchor_y, field_height
+    end
+
     if SB.button(ctx, "Legend", 80, field_height) then
       legend_request = true
     end
@@ -801,6 +816,14 @@ function M.create(env)
     -- a click outside closes it.
     if legend_request then
       legend_request = false
+
+      -- Placed only on the frame it opens, and only then: a SetNextWindowPos
+      -- that no Begin consumes stays armed and lands on the next window that
+      -- opens -- which here would be the panel itself, one frame later.
+      if legend_anchor_x and reaper.ImGui_SetNextWindowPos then
+        reaper.ImGui_SetNextWindowPos(ctx, legend_anchor_x, legend_anchor_y + (legend_anchor_h or 0) + 4)
+      end
+
       reaper.ImGui_OpenPopup(ctx, LEGEND_POPUP_ID)
     end
 

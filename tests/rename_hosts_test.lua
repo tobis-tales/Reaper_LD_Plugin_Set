@@ -38,7 +38,7 @@ local BASE_PROJECT = {
 }
 
 local PROJECT, ext_state, deferred, footer_text, labels, texts, click_label, clock,
-  selection_polls, marker_writes, popups_open, current_popup
+  selection_polls, marker_writes, popups_open, current_popup, window_pos_calls
 
 -- The window height the fake reports. 500 px is Tobi's usual docker; (g) turns
 -- it down to 400, which is where the legend used to be dropped.
@@ -90,6 +90,7 @@ local function build_reaper(initial_ext)
   deferred, footer_text, click_label = nil, nil, nil
   labels, texts = {}, {}
   popups_open, current_popup = {}, nil
+  window_pos_calls = {}
   clock = 0
   selection_polls = 0
   marker_writes = 0
@@ -170,6 +171,13 @@ local function build_reaper(initial_ext)
         if key == "ImGui_GetWindowDrawList" then return "dl" end
         if key == "ImGui_Begin" then return true, true end
         if key == "ImGui_GetCursorScreenPos" then return 100, 100 end
+        -- one entry per call, so a test can check both the count (OpenPopup
+        -- must be armed exactly once per click) and the position (the popup
+        -- must land under the anchor, not wherever the mouse was)
+        if key == "ImGui_SetNextWindowPos" then
+          window_pos_calls[#window_pos_calls + 1] = { x = a2, y = a3 }
+          return nil
+        end
         -- a docked strip, the width Tobi's workspace actually has
         if key == "ImGui_GetContentRegionAvail" then return 1400, 300 end
         if key == "ImGui_GetWindowSize" then return 1512, window_h end
@@ -411,6 +419,20 @@ do
     check(before == 1 and count_label("Close") == 2,
       "e3) and a Close button of its own, next to the window's",
       before .. " -> " .. count_label("Close"))
+
+    -- The click frame and the frame right after it have both run by now
+    -- (see above): exactly one SetNextWindowPos, anchored under the button
+    -- ("Legend" is drawn right after the preview field, whose screen
+    -- position the fake's GetCursorScreenPos reports as 100, 100).
+    local call = window_pos_calls[1]
+    check(#window_pos_calls == 1 and call and call.x == 100 and call.y > 100,
+      "e4) SetNextWindowPos is called once, x at the anchor and y below it",
+      #window_pos_calls .. " calls, x=" .. tostring(call and call.x) .. " y=" .. tostring(call and call.y))
+
+    frame()
+    check(#window_pos_calls == 1,
+      "e5) a further frame without a click adds no further call",
+      #window_pos_calls .. " calls")
   end
 end
 
@@ -432,6 +454,14 @@ do
 
     check(drew_text_containing("BeatFx(1)[Top]^BeatFx^") and drew("Close"),
       "f2) the popup opens with the legend and a Close button", "")
+
+    -- Same anchoring in the workspace host: the header band's own popup (the
+    -- BPM analyzer's ">>>") was never requested here, so this is the legend's
+    -- call alone.
+    local call = window_pos_calls[1]
+    check(#window_pos_calls == 1 and call and call.x == 100 and call.y > 100,
+      "f2b) the workspace host anchors the popup the same way",
+      #window_pos_calls .. " calls, x=" .. tostring(call and call.x) .. " y=" .. tostring(call and call.y))
 
     click_label = "Close"
     frame()
