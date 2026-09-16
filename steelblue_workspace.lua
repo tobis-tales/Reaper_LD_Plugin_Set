@@ -376,52 +376,17 @@ local function run_gui(SB)
     end
   end
 
-  -- The rename tab's "Legend" popup, built the same way and drawn in the same
-  -- place as the one above.
+  -- There is no legend popup here, and that is the point.
   --
-  -- The panel used to open this itself, and in a REAPER docker the popup landed
-  -- at the top of the screen instead of under its button (Tobi, 2026-09-16)
-  -- while the ">>>" popup in the very same docker sat right. So the popup moves
-  -- to where the working one is: opened by the host, submitted right after the
-  -- header band, before the tab bar -- not from inside a tab's body.
-  --
-  -- The click therefore opens the popup one frame later: the tab is drawn AFTER
-  -- this, so the request the button leaves behind is collected on the next pass.
-  local legend_open = false
-  local LEGEND_POPUP_ID = "steelblue_rename_legend"
-
-  local function draw_legend_popup(ctx_)
-    local request = panel_rename.take_legend_request()
-
-    if request then
-      legend_open = true
-
-      -- Placed only on the frame it opens, and only then -- see draw_bpm_popup.
-      -- The panel hands over the popup's corner, already dropped below the
-      -- button, so the drop lives in one place and not in two.
-      if request.x and reaper.ImGui_SetNextWindowPos then
-        reaper.ImGui_SetNextWindowPos(ctx_, request.x, request.y)
-      end
-
-      reaper.ImGui_OpenPopup(ctx_, LEGEND_POPUP_ID)
-    end
-
-    if not legend_open then
-      return
-    end
-
-    if reaper.ImGui_BeginPopup(ctx_, LEGEND_POPUP_ID) then
-      if panel_rename.legend(ctx_, SB) then
-        legend_open = false
-        reaper.ImGui_CloseCurrentPopup(ctx_)
-      end
-
-      reaper.ImGui_EndPopup(ctx_)
-    else
-      -- a click outside: ImGui closed it, and the flag has to follow
-      legend_open = false
-    end
-  end
+  -- The rename tab's "Legend" used to be a popup like the one above -- first
+  -- opened by the panel, then (v2m) by this host. Both landed at the top of the
+  -- screen in a REAPER docker (Tobi, 2026-09-16) while the ">>>" popup right
+  -- beside them sat correctly. The difference is size, not ownership: the
+  -- legend is about 700 x 380 and a docker is 400 tall, so it can never fit
+  -- inside the docker's viewport, and ReaImGui 0.10 gives a popup that does not
+  -- fit an OS window of its own. So the rename tab shows the legend in place of
+  -- its own body instead (opts.legend_inline, steelblue_rename.lua
+  -- draw_legend_inline) and nothing here has to be placed at all.
 
   -- Right-aligning is allowed here and nowhere else in this package: the
   -- docker decides the width, so placing an item by "available minus my own
@@ -481,7 +446,6 @@ local function run_gui(SB)
       })
 
       draw_bpm_popup(ctx)
-      draw_legend_popup(ctx)
 
       set_active_tab(SB.tab_bar(ctx, TABS, state.active_tab))
 
@@ -496,10 +460,10 @@ local function run_gui(SB)
         entries = entries,
         reason = reason,
         source = source,
-        -- Only the rename panel knows this one; the others ignore it. Popups
-        -- are windows, and in here a window belongs to the host -- see
-        -- draw_legend_popup above.
-        legend_by_host = true,
+        -- Only the rename panel knows this one; the others ignore it. No popup
+        -- in a docker: the legend replaces the tab body while it is open --
+        -- see the note where the popup used to be, above.
+        legend_inline = true,
       })
 
       -- Push the status line to the bottom edge: the docker owns the height,
