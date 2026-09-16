@@ -213,5 +213,63 @@ run("i) the selection line says where the order came from", function()
   return true, none
 end)
 
+-- ---------------------------------------------------------------- autostart
+
+-- Tobi, 2026-09-16: the workspace was gone after every REAPER restart. REAPER
+-- brings its own windows back and never a ReaScript window, so the installer's
+-- block in <resource>/Scripts/__startup.lua runs the action again -- but only
+-- when this entry says the window was up. Both writes have to persist, or the
+-- startup block reads an empty section on the next launch.
+run("j) starting writes autostart=1, with persist", function()
+  local W = load_workspace()
+  W.note_running(true)
+
+  local calls = set_calls("autostart")
+  if #calls ~= 1 then return false, #calls .. " writes, expected 1" end
+  if calls[1].value ~= "1" then return false, "wrote " .. tostring(calls[1].value) end
+  if calls[1].persist ~= true then return false, "written without persist" end
+  if calls[1].section ~= "steelblue_workspace" then
+    return false, "wrote into section " .. tostring(calls[1].section)
+  end
+  return true, 'autostart="1" in steelblue_workspace, persisted'
+end)
+
+-- Closing the window is a decision, not an accident: without this the flag
+-- would stay at "1" forever and the workspace would reopen itself for good.
+run("k) closing writes autostart=0, with persist", function()
+  local W = load_workspace()
+  W.note_running(true)
+  W.note_running(false)
+
+  local calls = set_calls("autostart")
+  if #calls ~= 2 then return false, #calls .. " writes, expected 2" end
+  if calls[2].value ~= "0" then return false, "closing wrote " .. tostring(calls[2].value) end
+  if calls[2].persist ~= true then return false, "written without persist" end
+  return true, '"1" on start, "0" on close'
+end)
+
+-- The two calls above prove the function; this proves run_gui actually makes
+-- them. run_gui never executes under the test hook (it returns first), so the
+-- call sites can only be checked by reading them.
+run("l) run_gui notes the window as running and as closed", function()
+  local source = io.open(folder .. "steelblue_workspace.lua", "rb")
+  local text = source:read("a")
+  source:close()
+
+  local body = text:match("local function run_gui%(SB%)(.*)\n%-%- ----+ start")
+  if not body then return false, "could not find run_gui in the file" end
+  if not body:find("note_running(true)", 1, true) then
+    return false, "run_gui never says the window is up"
+  end
+
+  -- specifically in the branch that tears the window down
+  local closing = body:match("panel_bpm%.release%(%)")
+  if not closing then return false, "could not find the closing branch" end
+  if not body:find("note_running(false)", 1, true) then
+    return false, "run_gui never says the window is gone"
+  end
+  return true, "both call sites are in run_gui"
+end)
+
 print(fails == 0 and "\nALL PASS" or ("\nFAILURES: " .. fails))
 os.exit(fails == 0 and 0 or 1)

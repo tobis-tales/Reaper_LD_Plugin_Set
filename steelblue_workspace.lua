@@ -117,6 +117,20 @@ local EXT_OPEN_TAB = "open_tab"
 -- written with persist, so it would sit in reaper-extstate.ini forever.
 local EXT_STALE_UNDOCKED = "undocked"
 
+-- Was the workspace on screen when REAPER was last shut down?
+--
+-- REAPER restores its own windows after a restart (Mixer, Media Explorer, ...)
+-- and never a ReaScript one, so the workspace was gone every morning. The
+-- installer's block in <resource>/Scripts/__startup.lua reads this entry at
+-- launch and runs the workspace action again if it says "1".
+--
+-- Which makes this the only state here that is written for somebody ELSE to
+-- read, so it has to be right at both ends: "1" while the window is up, "0" the
+-- moment the user closes it. Quitting REAPER with the window open never runs
+-- the closing branch, so "1" stays standing -- which is exactly the question
+-- being asked.
+local EXT_AUTOSTART = "autostart"
+
 local function ext_get(key)
   if not reaper.GetExtState then
     return ""
@@ -193,6 +207,12 @@ local function load_state()
   end
 end
 
+-- Persisted, or the startup block reads an empty section on the next launch:
+-- ExtState without persist lives only as long as this REAPER run.
+local function note_running(running)
+  ext_set(EXT_AUTOSTART, running and "1" or "0", true)
+end
+
 -- Another script can ask for a tab by writing its id here; the workspace takes
 -- it over once and clears it, so the same request cannot re-open the tab on
 -- every frame afterwards. This is how the four actions will open "their" tab.
@@ -263,6 +283,10 @@ end
 local function run_gui(SB)
   local ctx = reaper.ImGui_CreateContext(SCRIPT_TITLE)
   enable_docking(ctx)
+
+  -- Before the first frame: from here on, a REAPER that quits while this runs
+  -- should bring the workspace back.
+  note_running(true)
 
   local first_frame = true
 
@@ -458,6 +482,10 @@ local function run_gui(SB)
     if open then
       reaper.defer(loop)
     else
+      -- The user closed the window. That is a decision, not an accident, so the
+      -- next REAPER start must leave it closed.
+      note_running(false)
+
       -- the audio accessor is a REAPER resource, not a Lua one
       panel_bpm.release()
       BOOT.destroy_context(ctx)
@@ -479,6 +507,7 @@ if TEST_HOOK then
   TEST_HOOK.load_state = load_state
   TEST_HOOK.set_active_tab = set_active_tab
   TEST_HOOK.read_open_tab_request = read_open_tab_request
+  TEST_HOOK.note_running = note_running
   TEST_HOOK.dock_decision = dock_decision
   TEST_HOOK.selection_text = selection_text
   return
