@@ -206,7 +206,7 @@ local function build_reaper(opts)
         if key == "ImGui_GetWindowDrawList" then return "dl" end
         if key == "ImGui_Begin" then return true, true end
         if key == "ImGui_GetCursorScreenPos" then return 100, 100 end
-        if key == "ImGui_GetContentRegionAvail" then return 1400, 300 end
+        if key == "ImGui_GetContentRegionAvail" then return 1488, 300 end
         if key == "ImGui_GetWindowSize" then return 1512, 500 end
         if key == "ImGui_GetCursorPos" then return 12, 12 end
         if key == "ImGui_GetCursorPosX" then return 12 end
@@ -619,15 +619,18 @@ end
 
 -- ------------------------------------ (i) where the tab puts its two columns
 
--- Tobi, 2026-09-16: "Das Feld mit den Markern muss nicht so breit sein, dafuer
--- kann man links etwas auflockern." The list is now a FIXED 520 px against the
--- right edge instead of "all the width that is left".
+-- Tobi, TT 96 (2026-09-16): "Die Tabelle koennte noch etwas breiter sein.
+-- Einfach Haelfte der Breite Tabelle, Haelfte der Breite UI." The list now
+-- gets half of what the tab has left (floor, right edge as before) instead of
+-- a fixed 520 px; the controls column gets the other half. TT 97 (a scrollbar
+-- under ~370 px) is accepted -- height is untouched.
 --
--- The fake reports GetContentRegionAvail = (1400, 300) and GetCursorPosX = 12,
--- so the list has to start at 12 + 1400 - 520 = 892 and be 520 wide. Those two
--- numbers are the only part of a layout an offline harness can see at all
--- (AGENTS.md: "Layout is the one thing the offline harness cannot check") --
--- they prove the intent, not the picture. TT 212 is the picture.
+-- The fake reports GetContentRegionAvail = (1488, 300) and GetCursorPosX = 12,
+-- so the list is floor((1488 - 24) / 2) = 732 wide and starts at
+-- 12 + 1488 - 732 = 768. Those two numbers are the only part of a layout an
+-- offline harness can see at all (AGENTS.md: "Layout is the one thing the
+-- offline harness cannot check") -- they prove the intent, not the picture.
+-- TT 212 is the picture.
 do
   local handle
   reaper, handle = build_reaper({ selected_rows = { 1, 2 }, ext = { active_tab = "copy" } })
@@ -637,10 +640,10 @@ do
   handle.frame()
 
   local w, list_h = handle.child_size("copy_pick_list")
-  check(w == 520, "i1) the tab's list is 520 wide, not the rest of the docker",
+  check(w == 732, "i1) the tab's list is half the available width, not 520",
     tostring(w))
-  check(handle.set_cursor_x(12 + 1400 - 520),
-    "i2) and starts at the right edge minus 520", "x = " .. tostring(12 + 1400 - 520))
+  check(handle.set_cursor_x(12 + 1488 - 732),
+    "i2) and starts at the right edge minus that half", "x = " .. tostring(12 + 1488 - 732))
   check(list_h == 300 - 42 - 7,
     "i3) and still reaches down to the host's footer", tostring(list_h))
 

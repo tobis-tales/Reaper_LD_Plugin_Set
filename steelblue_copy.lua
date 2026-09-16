@@ -48,20 +48,19 @@ local LIST_ROWS = 8
 -- wide the auto-sizing window is.
 local LIST_WIDTH = 600
 
--- Wide layout (Tobi, 2026-09-16: "Das Feld mit den Markern muss nicht so breit
--- sein, dafuer kann man links etwas auflockern"). The list is a FIXED 520 px
--- pinned to the right edge of the tab; everything left of it belongs to the
--- controls. 520 carries the tick box, the 80 px position column and a long
--- marker name without the names running into the lane labels.
-local LIST_WIDTH_WIDE = 520
-
+-- Wide layout (Tobi TT 96, 2026-09-16: "Die Tabelle koennte noch etwas
+-- breiter sein. Einfach Haelfte der Breite Tabelle, Haelfte der Breite UI.").
+-- The list gets half of what the tab has left (wide_list_geometry), pinned to
+-- the right edge as before; the controls column gets the other half.
+--
 -- Between the controls column and the list.
 local COLUMN_GAP = 24
 
--- Below this the list gives width back rather than pushing the buttons (240 px
--- wide) off the left edge. Only reachable in a docker far narrower than
--- anything Tobi uses; without it a 600 px docker would draw the list on top of
--- the controls.
+-- Floor for the controls column: below this the list gives width back rather
+-- than pushing the buttons (240 px wide) off the left edge. Only reachable in
+-- a docker far narrower than anything Tobi uses; without it a 600 px docker
+-- would draw the list on top of the controls. (TT 97, a scrollbar under
+-- ~370 px, is accepted -- height is untouched.)
 local MIN_LEFT_WIDTH = 280
 
 -- Wide layout: the three copy buttons sit in one row under the fields, so they can afford to be
@@ -588,18 +587,21 @@ function M.create(env)
   end
 
   -- How wide the list is and where it starts, given what the host has left.
-  -- Returns nil for the x when the build cannot say, and the caller then falls
-  -- back to a plain SameLine.
+  -- Half the available width goes to the list, half to the controls column
+  -- (TT 96); floor() so the two halves never overrun avail_w by a pixel.
+  -- Below MIN_LEFT_WIDTH for the controls column, the list gives width back
+  -- instead. Returns nil for the x when the build cannot say, and the caller
+  -- then falls back to a plain SameLine.
   local function wide_list_geometry(ctx)
     local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
     local start_x = reaper.ImGui_GetCursorPosX(ctx)
 
     if type(avail_w) ~= "number" or avail_w <= 0 then
-      return LIST_WIDTH_WIDE, nil
+      return MIN_LEFT_WIDTH, nil
     end
 
-    local width = LIST_WIDTH_WIDE
-    if avail_w < LIST_WIDTH_WIDE + MIN_LEFT_WIDTH + COLUMN_GAP then
+    local width = math.floor((avail_w - COLUMN_GAP) / 2)
+    if avail_w - COLUMN_GAP - width < MIN_LEFT_WIDTH then
       width = math.max(240, avail_w - MIN_LEFT_WIDTH - COLUMN_GAP)
     end
 
@@ -611,11 +613,12 @@ function M.create(env)
   end
 
   -- Two columns across the docker: the controls on the left, the marker list
-  -- pinned to the RIGHT edge at a fixed 520 px. Right-aligning is allowed here
-  -- for the same reason steelblue_workspace.lua's header_right is allowed to do
-  -- it: the docker decides the width, so "available minus my own width" cannot
-  -- feed back into the window size the way it does in an auto-resizing window.
-  -- Nothing inside the left column is right-aligned.
+  -- pinned to the RIGHT edge at half the available width (wide_list_geometry).
+  -- Right-aligning is allowed here for the same reason steelblue_workspace.lua's
+  -- header_right is allowed to do it: the docker decides the width, so
+  -- "available minus my own width" cannot feed back into the window size the
+  -- way it does in an auto-resizing window. Nothing inside the left column is
+  -- right-aligned.
   --
   -- The left column is a GROUP, not a child: it has to keep drawing its
   -- buttons whatever happens, and a child that reports itself clipped would
