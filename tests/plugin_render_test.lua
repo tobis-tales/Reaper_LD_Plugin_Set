@@ -103,7 +103,7 @@ local function make_reaper()
           if key == "ImGui_GetContentRegionAvail" then return 400, 300 end
           -- A docker that is short for the first five frames and tall from
           -- then on, so the rename tab (frames 1-10, see BeginTabItem below)
-          -- renders both with and without the reference lines.
+          -- draws at two heights (the legend moved into a popup in v2h, so nothing depends on it now).
           if key == "ImGui_GetWindowSize" then
             return 1512, state.frame >= 6 and 500 or 400
           end
