@@ -27,7 +27,7 @@
 
 local M = {}
 
-M.VERSION = "1.2"
+M.VERSION = "1.3"
 
 -- The colour of the last run, remembered across REAPER sessions.
 local EXT_SECTION = "steelblue_rename"
@@ -737,6 +737,10 @@ function M.create(env)
   -- What the legend popup contains. One column and the introduction sentence in
   -- both layouts: a popup is its own window and fits nothing, so the two-column
   -- variant the docked tab used to need is gone with it.
+  --
+  -- It only says "Close was pressed" and closes nothing itself: whoever opened
+  -- the popup closes it, because that side is the one holding the open/closed
+  -- flag. Same contract as steelblue_bpm.lua's popup().
   local function draw_legend(ctx, SB)
     SB.section(ctx, "Legend")
 
@@ -748,9 +752,7 @@ function M.create(env)
 
     reaper.ImGui_Separator(ctx)
 
-    if SB.button(ctx, "Close", 110, 26) then
-      reaper.ImGui_CloseCurrentPopup(ctx)
-    end
+    return SB.button(ctx, "Close", 110, 26)
   end
 
   -- Draws the panel into a frame the host has already opened. Returns true when
@@ -763,6 +765,10 @@ function M.create(env)
   --   opts.entries         the selection the host has already polled, with
   --   opts.source          its source (and opts.reason); when given, the
   --                        panel does not poll on its own
+  --   opts.legend_by_host  the HOST draws the legend popup: the button only
+  --                        leaves a request behind, which the host collects
+  --                        with take_legend_request() and renders with
+  --                        legend(). See the block at the end of frame().
   local function frame(ctx, SB, opts)
     opts = opts or {}
 
@@ -808,31 +814,77 @@ function M.create(env)
       end
     end
 
-    -- The panel owns this popup, unlike the analyzer's ">>>" one, which its
-    -- host owns: nothing outside the panel needs to know the legend exists.
-    -- OpenPopup goes after the buttons so the request the button above just
-    -- set is served in the same pass, and BeginPopup runs on every frame --
-    -- it answers true only while the popup is open, and false again the frame
-    -- a click outside closes it.
-    if legend_request then
-      legend_request = false
+    -- Who owns the legend popup depends on the host.
+    --
+    -- In its own window the panel owns it: nothing outside needs to know the
+    -- legend exists, and that path works -- leave it alone. OpenPopup goes
+    -- after the buttons so the request the button above just set is served in
+    -- the same pass, and BeginPopup runs on every frame -- it answers true only
+    -- while the popup is open, and false again the frame a click outside
+    -- closes it.
+    --
+    -- In the workspace (opts.legend_by_host) the HOST owns it, exactly the way
+    -- it owns the analyzer's ">>>" popup. Docked into a REAPER docker, that
+    -- one lands under its button and this one landed at the top of the screen
+    -- (Tobi, 2026-09-16), and the two differ in nothing but who submits the
+    -- popup and where in the frame. So the panel stops submitting it: not one
+    -- OpenPopup, not one BeginPopup from here.
+    if not opts.legend_by_host then
+      if legend_request then
+        legend_request = false
 
-      -- Placed only on the frame it opens, and only then: a SetNextWindowPos
-      -- that no Begin consumes stays armed and lands on the next window that
-      -- opens -- which here would be the panel itself, one frame later.
-      if legend_anchor_x and reaper.ImGui_SetNextWindowPos then
-        reaper.ImGui_SetNextWindowPos(ctx, legend_anchor_x, legend_anchor_y + (legend_anchor_h or 0) + 4)
+        -- Placed only on the frame it opens, and only then: a SetNextWindowPos
+        -- that no Begin consumes stays armed and lands on the next window that
+        -- opens -- which here would be the panel itself, one frame later.
+        if legend_anchor_x and reaper.ImGui_SetNextWindowPos then
+          reaper.ImGui_SetNextWindowPos(ctx, legend_anchor_x, legend_anchor_y + (legend_anchor_h or 0) + 4)
+        end
+
+        reaper.ImGui_OpenPopup(ctx, LEGEND_POPUP_ID)
       end
 
-      reaper.ImGui_OpenPopup(ctx, LEGEND_POPUP_ID)
-    end
-
-    if reaper.ImGui_BeginPopup(ctx, LEGEND_POPUP_ID) then
-      draw_legend(ctx, SB)
-      reaper.ImGui_EndPopup(ctx)
+      if reaper.ImGui_BeginPopup(ctx, LEGEND_POPUP_ID) then
+        if draw_legend(ctx, SB) then
+          reaper.ImGui_CloseCurrentPopup(ctx)
+        end
+        reaper.ImGui_EndPopup(ctx)
+      end
     end
 
     return close_requested
+  end
+
+  -- The host's half of the host-owned legend, both halves of it.
+  --
+  -- take_legend_request() hands out the pending click exactly once -- it clears
+  -- the request on the way out, so a host that calls it every frame opens the
+  -- popup once per click and not once per frame. The position it returns is
+  -- already the popup's top-left corner: the "Legend" button's own screen
+  -- position, dropped below the button.
+  local function take_legend_request()
+    if not legend_request then
+      return nil
+    end
+
+    legend_request = false
+
+    if not legend_anchor_x then
+      -- Clicked before the button was ever drawn with a readable position:
+      -- still a request, just without a place to put it. The host opens the
+      -- popup anyway and ImGui puts it at the mouse.
+      return {}
+    end
+
+    return {
+      x = legend_anchor_x,
+      y = legend_anchor_y + (legend_anchor_h or 0) + 4,
+    }
+  end
+
+  -- What goes inside the host's BeginPopup/EndPopup. True when "Close" was
+  -- pressed; closing the popup is the host's job, it holds the flag.
+  local function legend(ctx, SB)
+    return draw_legend(ctx, SB)
   end
 
   -- Outside the frame: safe to touch the project. The host calls this after
@@ -880,6 +932,8 @@ function M.create(env)
 
   return {
     frame = frame,
+    take_legend_request = take_legend_request,
+    legend = legend,
     after_frame = after_frame,
     status = status,
     run_fallback = run_fallback,
