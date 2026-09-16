@@ -61,10 +61,12 @@ end
 local log, answers, answer_at = {}, {}, 0
 local scenario
 
--- What the fake REAPER says the workspace action is called. The real one looks
--- exactly like this except for the leading underscore, which REAPER strips and
--- NamedCommandLookup wants back -- the installer normalises either way.
+-- What the startup block must name the workspace action: with the leading
+-- underscore NamedCommandLookup wants. REAPER's ReverseNamedCommandLookup hands
+-- the id back WITHOUT it, so that is what the fake returns -- the installer has
+-- to put it back, and this pair of constants is what proves it does.
 local WORKSPACE_COMMAND_ID = "_RS1234abcd"
+local WORKSPACE_REVERSE_ID = "RS1234abcd"
 
 local STARTUP_BEGIN = "-- steelblue LD Tools: autostart (managed by steelblue_install.lua) -- begin"
 local STARTUP_END = "-- steelblue LD Tools: autostart -- end"
@@ -112,8 +114,8 @@ local function fake()
   r.AddRemoveReaScript = function(add, sec, fn, commit)
     log[#log + 1] = { kind = "register", file = fn:match("([^/]+)$"), path = fn, commit = commit }
     local cmd = 40000 + #log
-    ids[cmd] = fn:find("steelblue_workspace.lua", 1, true) and WORKSPACE_COMMAND_ID
-      or ("_RSother" .. cmd)
+    ids[cmd] = fn:find("steelblue_workspace.lua", 1, true) and WORKSPACE_REVERSE_ID
+      or ("RSother" .. cmd)
     return cmd
   end
   if not scenario.no_reverse_lookup then
@@ -377,7 +379,7 @@ check(run("a) no __startup.lua yet: one is written with both markers", {
     return false, "the block names no command id: " .. text
   end
   -- the workspace's id, not some other plugin's
-  if text:find("_RSother", 1, true) then return false, "named the wrong action" end
+  if text:find("RSother", 1, true) then return false, "named the wrong action" end
   if not dialogs_matching(log, "Reopens the workspace at startup") then
     return false, "the summary never mentioned the autostart"
   end
