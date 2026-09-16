@@ -1,30 +1,43 @@
 <div align="center">
   <img src="Tutorials/mark.svg" alt="steelblue studios" width="72">
   <h1>REAPER LD Plugin Set</h1>
-  <p><em>Four tools for cue programming in REAPER — for lighting designers who write their timecode cues as markers.</em></p>
+  <p><em>Tools for cue programming in REAPER — for lighting designers who write their timecode cues as markers.</em></p>
   <p><strong>steelblue studios</strong></p>
 </div>
 
 ---
 
-If you build light shows to a timeline, you probably live in REAPER's markers: one marker per cue, named for your console. These four plugins take the tedious parts of that off your hands — finding the real tempo, turning a MIDI rhythm into cues, naming a whole block at once, and copying a block to where the music repeats.
+If you build light shows to a timeline, you probably live in REAPER's markers: one marker per cue, named for your console. These plugins take the tedious parts of that off your hands — finding the real tempo, turning a MIDI rhythm into cues, naming a whole block at once, and copying a block to where the music repeats.
 
-1.1.0 was tested on macOS; Windows was tested for 1.0.0 and the changes since are platform-neutral Lua. REAPER 7.
+Since 2.0 there is a fifth thing in the package: **steelblue LD Tools**, one window that sits in REAPER's bottom docker next to the Mixer and holds all of it — the live tempo read-out in its header band, and Rename, MIDI and Copy as tabs. It opens with REAPER and stays there, so none of this needs starting any more. The four single plugins are still in the package and still work exactly as before.
+
+2.0.0 was tested on macOS. Windows was tested for 1.0.0 and everything since is platform-neutral Lua — except the docker slot the workspace asks REAPER for, which has only ever been verified on macOS. REAPER 7.
 
 ## The plugins
 
 | Plugin | What it does |
 | --- | --- |
+| **steelblue LD Tools** | All of the below in one docked window: the tempo read-out in the header, and Rename · MIDI notes to markers · Copy Markers as tabs. Opens with REAPER. |
 | **Live BPM Analyzer** | Reads the real tempo out of the audio to two decimals and sets the project tempo — without moving anything you have already placed. |
-| **MIDI notes to project markers** | Turns a MIDI item into markers: one per note, named after the note and coloured to match the track. Write your cue rhythm as MIDI, get cues. |
+| **MIDI notes to project markers** | Turns a MIDI item into markers: one per note, in a ruler lane per track, named and coloured to match the track. Write your cue rhythm as MIDI, get cues. |
 | **Rename selected markers** | Builds MA-Tools cue names for a whole selection at once, with a live preview and cue numbering that wraps. |
 | **Copy Markers** | Duplicates a block of markers somewhere else, keeping their spacing, names and colours. For the chorus that comes back later in the song. |
 
 <div align="center">
-  <img src="Tutorials/img/bpm-01-analyze.png" alt="Live BPM Analyzer" width="46%">
+  <img src="Tutorials/img/workspace-01-rename.png" alt="steelblue LD Tools in REAPER's bottom docker, showing the Rename tab" width="46%">
   &nbsp;
-  <img src="Tutorials/img/copy-01a-window.png" alt="Copy Markers" width="46%">
+  <img src="Tutorials/img/workspace-02-copy.png" alt="The Copy Markers tab with the marker list" width="46%">
 </div>
+
+## What's new in 2.0.0
+
+- **steelblue LD Tools** — a new window that lives in REAPER's bottom docker next to the Mixer. Header band: the live BPM read-out with its confidence bar, a switch, **Precision analyze**, and a `›››` button for the rest of the analyzer. Below it: the tabs **Rename selected markers · MIDI notes to markers · Copy Markers**, and one status line at the bottom that belongs to whichever tab is open.
+- **Starts with REAPER.** The installer writes a small marked block into REAPER's `Scripts/__startup.eel`, so the window is there every time you open REAPER. Delete that block to stop it.
+- **The installer registers five actions now** — the four plugins and the workspace — copies everything into REAPER's Scripts folder, and removes `.lua` files there that are no longer part of the set, naming each one it removed.
+- **Rename selected markers** — a **Legend** button next to the preview explains every part of the syntax (in the docked tab it takes over the tab body; in the single window it is a popup). The Command list defaults to **Top**.
+- **MIDI notes to project markers** — a **Ruler lanes** section: one lane per track, named after the track, plus **Replace existing markers in these lanes**. Below REAPER 7.72 it says so and writes names and colours without lanes.
+- **Copy Markers** — a list of every marker in the project with a tick box next to each. It mirrors the Region/Marker Manager's selection until you tick something yourself; **Use selection** goes back to following it, **Clear selection** empties it, and what is ticked is what gets copied. Copies keep their ruler lane.
+- **Live BPM Analyzer** — a **Source** line naming the track, take and file being analysed, and it steps around timecode tracks (LTC/SMPTE/MTC/TC by name) when it picks the item. **Precision analyze** now runs in the background with a progress bar instead of freezing the window.
 
 ## What's new in 1.1.3
 
@@ -56,7 +69,7 @@ If you build light shows to a timeline, you probably live in REAPER's markers: o
 - macOS → `steelblue-LD-Plugin-Set-macOS.dmg`
 - Windows → `steelblue-LD-Plugin-Set-Windows.zip`
 
-Needs REAPER 7.x; ruler lanes need REAPER 7.72 or newer.
+Needs REAPER 7.x. **Ruler lanes need REAPER 7.72 or newer** — below that, *MIDI notes to project markers* says so and writes marker names and colours without lanes, and everything else works unchanged.
 
 Then, in REAPER — one step:
 
@@ -64,9 +77,17 @@ Then, in REAPER — one step:
 Actions  ▸  Show Action List  ▸  New action…  ▸  Load ReaScript…
 ```
 
-Pick **`steelblue_install.lua`** from the package and run it. The installer copies the plugins into REAPER's own Scripts folder, registers all four as actions, offers you a keyboard shortcut for each, and — because REAPER only loads extensions at startup — offers to quit REAPER so the next launch has everything ready.
+Pick **`steelblue_install.lua`** from the package and run it. The installer copies the plugins into REAPER's own Scripts folder, registers **five actions** — the four plugins and `steelblue_workspace.lua`, which is the LD Tools window — offers you a keyboard shortcut for each, and — because REAPER only loads extensions at startup — offers to quit REAPER so the next launch has everything ready.
+
+It also sets up the workspace to open on its own: a marked block goes into `Scripts/__startup.eel`, the file REAPER runs at every start. The summary at the end says so.
 
 That is the whole install. Afterwards you can throw the package away.
+
+### If you would rather not have the window open itself
+
+Open `__startup.eel` in REAPER's own Scripts folder and delete the block between the two `// steelblue LD Tools: autostart` comment lines. Nothing else reads it, and the action stays in the Action List — you can still open the window by hand whenever you want it.
+
+The action is called **`steelblue_workspace.lua`** in the Action List, and it is a toggle: running it while the window is open closes it again.
 
 > **Why a script and not an .exe / .pkg?** Only a script running *inside* REAPER can register an action or open the shortcut dialog (`AddRemoveReaScript` exists only in-process). An external installer could drop files in place but would still leave you to "Load ReaScript…" by hand — so the script does the job an installer can't.
 
@@ -74,7 +95,7 @@ That is the whole install. Afterwards you can throw the package away.
 
 The plugins need two REAPER extensions, and **both are bundled** for every supported architecture:
 
-- **ReaImGui** — draws all four plugin windows.
+- **ReaImGui** — draws every window in the set, the LD Tools workspace included.
 - **js_ReaScriptAPI** — lets *Rename selected markers* read the order of your selection in the Region/Marker Manager.
 
 Neither ships with REAPER. The installer picks the right build for your machine and installs it only if it is missing — it **never overwrites or downgrades** an extension you already have, and if you manage extensions through [ReaPack](https://reapack.com), ReaPack stays in charge. Both are the authors' own unmodified builds under their own licenses; see [`extensions/NOTICE.txt`](extensions/NOTICE.txt).
@@ -83,15 +104,17 @@ Neither ships with REAPER. The installer picks the right build for your machine 
 
 Before starting a marker plugin from a shortcut, **click once into the arrange view.** While the Region/Marker Manager has keyboard focus it swallows the shortcut — the window never appears, and your marker selection gets cleared as well.
 
+This is one reason the workspace is worth having: it is already open, so there is no shortcut to swallow. Select in the manager, look at the tab, work.
+
 ## Try it without a real show
 
 The [`Demo Project/`](Demo%20Project) folder holds a small REAPER project — a beat at exactly 128 BPM, a MIDI item, and named markers — so you can follow every guide without touching a real show file.
 
 ## Guides
 
-One page per plugin, with screenshots, under [`Tutorials/`](Tutorials) (open `index.html`), and the same guides as PDF in the package. There is also a short phone-format walkthrough of Copy Markers at [`Tutorials/video/`](Tutorials/video).
+One page per plugin plus one for the workspace, with screenshots, under [`Tutorials/`](Tutorials) (open `index.html`), and the same guides as PDF in the package. There is also a short phone-format walkthrough of Copy Markers at [`Tutorials/video/`](Tutorials/video).
 
-The guides and videos still show version 1.0. Where the window looks different (Rename's three text fields, MIDI's ruler lanes), the plugin is right and the guide is old; updated guides come with version 2.
+The written guides describe 2.0. The video still shows version 1.0 — the steps it walks through are the same, but the Copy Markers window in it has no marker list yet.
 
 ## Building from source
 
