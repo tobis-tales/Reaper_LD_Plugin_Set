@@ -51,6 +51,13 @@ local LIVE_STEP_BUDGET = 0.004
 local MIN_ANALYSIS_SECONDS = 4
 local PRECISION_MAX_SECONDS = 120
 local PRECISION_MIN_SECONDS = 12
+-- How much audio the precision pass pulls out of the accessor per defer frame.
+-- The whole pass used to be one synchronous read of up to PRECISION_MAX_SECONDS,
+-- which froze the window for seconds with nothing moving on screen. In chunks the
+-- frame cost is bounded and the progress bar has something to say. The chunk is a
+-- whole number of seconds so its sample count is exact at SAMPLE_RATE, which is
+-- what lets the assembled buffer be identical to the single read it replaces.
+local PRECISION_READ_CHUNK_SECONDS = 8
 
 local HARMONIC_WEIGHTS = { 1.0, 0.6, 0.4 }
 
@@ -98,6 +105,9 @@ function M.create(env)
   local pending_estimate = nil
   local pending_envelope_ms = 0
   local pending_estimate_ms = 0
+  -- The precision pass in progress, one step per defer frame. nil when none runs;
+  -- while it is set, the live path stands still and the layouts show progress.
+  local precision_job = nil
 
   -- The item the analyzer is listening to, and what the window says about it.
   -- Kept together because the window must never name a different item than the
@@ -1169,17 +1179,17 @@ function M.create(env)
     return onsets, nil
   end
 
-  local function read_precision_window(item, take)
+  -- Which stretch of the item the precision pass listens to. Analyze up to
+  -- PRECISION_MAX_SECONDS; for longer songs take the middle of the item, which
+  -- usually has the steadiest beat (skips intro/outro).
+  local function precision_span(item)
     local item_length = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
 
     if item_length < PRECISION_MIN_SECONDS then
-      return nil, nil, nil,
-        "Precision pass needs at least " .. tostring(PRECISION_MIN_SECONDS) .. " seconds of audio.",
-        0
+      return nil, nil,
+        "Precision pass needs at least " .. tostring(PRECISION_MIN_SECONDS) .. " seconds of audio."
     end
 
-    -- Analyze up to PRECISION_MAX_SECONDS. For longer songs take the middle of
-    -- the item, which usually has the steadiest beat (skips intro/outro).
     local duration = math.min(item_length, PRECISION_MAX_SECONDS)
     local offset = 0
 
@@ -1187,8 +1197,7 @@ function M.create(env)
       offset = (item_length - duration) / 2
     end
 
-    local buffer, sample_count, channel_count, err = read_samples(take, offset, duration)
-    return buffer, sample_count, channel_count, err, duration
+    return offset, duration, nil
   end
 
   local function format_octave_note(octave_bpm, octave_share)
@@ -1353,7 +1362,55 @@ function M.create(env)
     apply_estimate(estimator.bpm, estimator.confidence, estimator.octave_bpm, estimator.octave_share)
   end
 
-  local function precision_analyze()
+  -- ------------------------------------------------------ the precision pass
+  --
+  -- The same three stages the synchronous pass ran in one go -- read, envelope,
+  -- estimate -- but one stage per defer frame, so the window keeps drawing and
+  -- the playback cursor keeps moving while up to two minutes of audio are pulled
+  -- through the accessor. The reading stage is the long one and is cut into
+  -- PRECISION_READ_CHUNK_SECONDS pieces; the other two are one frame each, as
+  -- expensive as they have always been.
+  --
+  -- The assembled buffer MUST be the buffer a single
+  -- read_samples(offset, duration) would have produced, sample for sample:
+  -- everything AGENTS.md ("4. Live BPM Analyzer") promises about accuracy is
+  -- measured on that buffer. Two things make that true and both are load-bearing:
+  -- the total sample count is computed once from the whole duration (not summed
+  -- from rounded chunks), and every chunk starts at offset + read/SAMPLE_RATE,
+  -- i.e. exactly where the previous one ended.
+
+  -- 0..1 while a pass runs, nil when none does. The read stage owns the first
+  -- 80% because it is the only stage whose length depends on the song.
+  local function precision_progress()
+    local job = precision_job
+    if not job then
+      return nil
+    end
+
+    if job.phase == "read" then
+      local fraction = job.duration > 0 and (job.read_pos / job.duration) or 0
+      return clamp(fraction, 0, 1) * 0.8
+    end
+
+    if job.phase == "envelope" then
+      return 0.85
+    end
+
+    return 0.95
+  end
+
+  local function precision_status()
+    return string.format("Running precision pass... %d%%",
+      math.floor((precision_progress() or 0) * 100))
+  end
+
+  -- Sets the job up, or says why it cannot run. Everything that can fail before
+  -- a single sample is read fails here, with the texts the synchronous pass used.
+  local function start_precision()
+    if precision_job then
+      return
+    end
+
     local item, take, err = pick_audio_item(current_item)
     if err then
       status = err
@@ -1362,23 +1419,109 @@ function M.create(env)
 
     set_current_item(item)
 
-    local buffer, sample_count, channel_count, read_err, analyzed_seconds = read_precision_window(item, take)
-    if read_err then
-      status = read_err
+    local offset, duration, span_err = precision_span(item)
+    if span_err then
+      status = span_err
       return
     end
 
-    local onsets = build_onset_envelope(buffer, sample_count, channel_count)
+    local accessor, channel_count, accessor_err = accessor_for(take)
+    if not accessor then
+      status = accessor_err
+      return
+    end
+
+    local sample_count = math.floor(duration * SAMPLE_RATE)
+    if sample_count <= FRAME_SIZE then
+      status = "Analysis window is too short."
+      return
+    end
+
+    local buffer = reaper.new_array(sample_count * channel_count)
+    buffer.clear()
+
+    precision_job = {
+      item = item,
+      take = take,
+      offset = offset,
+      duration = duration,
+      read_pos = 0,
+      buffer = buffer,
+      sample_count = sample_count,
+      channel_count = channel_count,
+      -- Samples already in the buffer. read_pos is this in seconds; the sample
+      -- count is what the chunking arithmetic runs on, because seconds round.
+      read_samples = 0,
+      phase = "read",
+    }
+
+    status = precision_status()
+  end
+
+  local function finish_precision(new_status)
+    precision_job = nil
+    status = new_status
+  end
+
+  local function step_precision_read(job)
+    local accessor, channel_count, accessor_err = accessor_for(job.take)
+    if not accessor then
+      finish_precision(accessor_err)
+      return
+    end
+
+    local remaining = job.sample_count - job.read_samples
+    local chunk = math.min(PRECISION_READ_CHUNK_SECONDS * SAMPLE_RATE, remaining)
+    local scratch = reaper.new_array(chunk * channel_count)
+    scratch.clear()
+
+    local ok = reaper.GetAudioAccessorSamples(
+      accessor,
+      SAMPLE_RATE,
+      channel_count,
+      job.offset + (job.read_samples / SAMPLE_RATE),
+      chunk,
+      scratch
+    )
+
+    if ok ~= 1 then
+      finish_precision("Could not read audio samples.")
+      return
+    end
+
+    job.buffer.copy(scratch, 1, chunk * channel_count, (job.read_samples * channel_count) + 1)
+    job.read_samples = job.read_samples + chunk
+    job.read_pos = job.read_samples / SAMPLE_RATE
+
+    if job.read_samples >= job.sample_count then
+      job.phase = "envelope"
+    end
+
+    status = precision_status()
+  end
+
+  local function step_precision_envelope(job)
+    local onsets = build_onset_envelope(job.buffer, job.sample_count, job.channel_count)
     if not onsets then
-      status = "Precision pass: could not find enough rhythmic transients."
+      finish_precision("Precision pass: could not find enough rhythmic transients.")
       return
     end
 
-    local estimated_bpm, detected_confidence, octave_bpm, octave_share = estimate_bpm(onsets)
+    job.onsets = onsets
+    job.phase = "estimate"
+    status = precision_status()
+  end
+
+  local function step_precision_estimate(job)
+    local analyzed_seconds = job.duration
+    local estimated_bpm, detected_confidence, octave_bpm, octave_share = estimate_bpm(job.onsets)
+
     if not estimated_bpm then
-      status = "Precision pass: no stable BPM candidate found."
+      finish_precision("Precision pass: no stable BPM candidate found.")
       return
     end
+
+    precision_job = nil
 
     raw_bpm = estimated_bpm
     current_bpm = estimated_bpm
@@ -1393,6 +1536,31 @@ function M.create(env)
       "Precision result from %.0f s of audio. Live updates paused so the value stays.",
       analyzed_seconds
     )
+  end
+
+  -- One frame's worth of the pass. Called from tick() before anything else, so a
+  -- running pass and the live loop can never share a frame.
+  local function step_precision_job()
+    local job = precision_job
+    if not job then
+      return
+    end
+
+    -- The job holds its item and take for its whole run -- the numbers have to
+    -- come from one song. If that item goes away under it (deleted, project
+    -- closed), there is nothing left to finish.
+    if not item_is_valid(job.item) then
+      finish_precision("Precision pass cancelled: the item changed.")
+      return
+    end
+
+    if job.phase == "read" then
+      step_precision_read(job)
+    elseif job.phase == "envelope" then
+      step_precision_envelope(job)
+    else
+      step_precision_estimate(job)
+    end
   end
 
   local function get_project_timebase()
@@ -1525,6 +1693,14 @@ function M.create(env)
   -- screen -- in the workspace the analyzer keeps running while another tab is
   -- open, and the header block has to keep counting.
   local function tick()
+    -- The precision pass first and alone: it is already reading audio and
+    -- running the estimator, and a live pass on top of it would put two heavy
+    -- stages into one frame -- exactly the stutter both are sliced to avoid.
+    if precision_job then
+      step_precision_job()
+      return
+    end
+
     local now = reaper.time_precise()
     -- Never both in one frame: the envelope update and a search slice each cost
     -- a few milliseconds, and together they are back over the frame budget.
@@ -1562,10 +1738,16 @@ function M.create(env)
   -- What each button does, in one place: the window and the popup carry the
   -- same six, and a difference between them would be a bug nobody sees.
   local function on_precision()
-    -- The one line that must happen NOW: the pass itself runs after the frame,
-    -- and until it does the footer would still say whatever it said before.
-    status = "Running precision pass..."
-    queue(precision_analyze)
+    -- The button is drawn disabled while a pass runs, but a host that forgets to
+    -- do that must not be able to restart the job halfway through.
+    if precision_job then
+      return
+    end
+
+    -- The one line that must happen NOW: the job is set up after the frame, and
+    -- until it is the footer would still say whatever it said before.
+    status = "Running precision pass... 0%"
+    queue(start_precision)
   end
 
   local function on_analyze_now()
@@ -1872,6 +2054,11 @@ function M.create(env)
       source_text_of = source_text_of,
       set_current_item = set_current_item,
       apply_estimate = apply_estimate,
+      -- The precision pass, so a test can start it, step it frame by frame and
+      -- compare what it assembles against a single read.
+      start_precision = start_precision,
+      precision_progress = precision_progress,
+      get_precision_job = function() return precision_job end,
       -- A search in flight, so a test can prove an item change throws it away.
       start_pending_estimate_for_test = function()
         pending_estimate = { step = function() return false end }
