@@ -39,7 +39,7 @@ local BASE_PROJECT = {
 
 local PROJECT, ext_state, deferred, footer_text, labels, texts, click_label, clock,
   selection_polls, marker_writes, popups_open, current_popup, window_pos_calls,
-  opened_this_frame
+  opened_this_frame, child_balance, child_sizes
 
 -- The window height the fake reports. 500 px is Tobi's usual docker; (g) turns
 -- it down to 400, which is where the legend used to be dropped.
@@ -113,6 +113,8 @@ local function build_reaper(initial_ext)
   popups_open, current_popup = {}, nil
   window_pos_calls = {}
   opened_this_frame = {}
+  child_balance = 0
+  child_sizes = {}
   clock = 0
   selection_polls = 0
   marker_writes = 0
@@ -224,6 +226,18 @@ local function build_reaper(initial_ext)
           if current_popup then popups_open[current_popup] = nil end
           return nil
         end
+        -- A child that is on screen, counted the way plugin_render_test.lua
+        -- counts it. "true" and not "false": a fake that says the child is
+        -- clipped would let the legend skip everything inside it and still
+        -- look rendered. EndChild belongs after EVERY BeginChild, so a missing
+        -- one leaves child_balance at +1.
+        if key == "ImGui_BeginChild" then
+          child_balance = child_balance + 1
+          child_sizes[a2] = { w = a3, h = a4 }
+          return true
+        end
+        if key == "ImGui_EndChild" then child_balance = child_balance - 1 return nil end
+
         if key == "ImGui_GetCursorPos" then return 12, 12 end
         if key == "ImGui_GetCursorPosX" then return 12 end
         if key == "ImGui_GetFrameHeight" then return 23 end
@@ -467,7 +481,9 @@ do
   end
 end
 
--- The workspace tab: open it, read it, close it.
+-- The workspace tab: open it, read it, close it. No popup is involved any more
+-- (see (h) below) -- the legend takes the tab body -- but from the outside the
+-- three steps are the same three steps.
 do
   reaper = capture_footer(build_reaper({ active_tab = "rename" }))
   local ok, err = pcall(dofile, folder .. "steelblue_workspace.lua")
@@ -484,15 +500,14 @@ do
     frame()
 
     check(drew_text_containing("BeatFx(1)[Top]^BeatFx^") and drew("Close"),
-      "f2) the popup opens with the legend and a Close button", "")
+      "f2) the legend opens with its lines and a Close button", "")
 
-    -- Same anchoring in the workspace host: the header band's own popup (the
-    -- BPM analyzer's ">>>") was never requested here, so this is the legend's
-    -- call alone.
-    local call = window_pos_calls[1]
-    check(#window_pos_calls == 1 and call and call.x == 100 and call.y > 100,
-      "f2b) the workspace host anchors the popup the same way",
-      #window_pos_calls .. " calls, x=" .. tostring(call and call.x) .. " y=" .. tostring(call and call.y))
+    -- Not one window is placed on the way: a legend that needs no window of its
+    -- own is the whole fix, so this is the check that would go red if a popup
+    -- ever came back into this host.
+    check(#window_pos_calls == 0 and count_opened("steelblue_rename_legend") == 0,
+      "f2b) and no window is opened or placed for it",
+      #window_pos_calls .. " position calls")
 
     click_label = "Close"
     frame()
@@ -529,81 +544,123 @@ do
   window_h = 500
 end
 
--- Who opens the legend in the workspace. Docked into a REAPER docker the popup
--- the PANEL opened landed at the top of the screen while the analyzer's ">>>"
--- popup, which the HOST opens, sat under its button (Tobi, 2026-09-16). So the
--- legend is built like the working one, and these checks are about the build,
--- not about the look: the panel submits no popup at all any more, and the host
--- submits it in the same place the ">>>" one is submitted -- after the header
--- band, before the tab bar.
+-- The legend in the workspace, which is no longer a popup at all.
+--
+-- History, because the checks below only make sense with it: the legend popup
+-- landed at the top of the screen in a REAPER docker while the analyzer's
+-- ">>>" popup right beside it sat under its button (Tobi, 2026-09-16). Moving
+-- the popup from the panel to the host (v2m) did not help, because the cause is
+-- size: the legend is about 700 x 380 and a docker is 400 tall, so it can never
+-- fit inside the docker's viewport and ReaImGui gives it an OS window of its
+-- own. So in this host there is no popup: while the legend is open it IS the
+-- tab body, and the fields are not drawn at all.
+--
+-- What that makes checkable, and what these checks are about: no OpenPopup and
+-- no SetNextWindowPos anywhere; the tab body really is replaced (the Rename
+-- button is gone while the legend is up, and back afterwards); every BeginChild
+-- has its EndChild; and the fields survive the round trip, because a legend
+-- that resets what the user typed is worse than a legend in the wrong place.
 do
   reaper = capture_footer(build_reaper({ active_tab = "rename" }))
   local ok, err = pcall(dofile, folder .. "steelblue_workspace.lua")
   if not ok then
-    check(false, "h) the workspace loads for the host-owned legend test", tostring(err))
+    check(false, "h) the workspace loads for the inline legend test", tostring(err))
   else
     frame()
 
-    -- the click frame: the button leaves a request behind and nothing else
+    -- Change a field first, the way a user would before reaching for the
+    -- legend: "+" bumps the cue number to 2 (see (d)). Nothing else in this
+    -- suite can reach the panel's state through a label click, and the rename
+    -- at the end of this block is what reads it back out.
+    click_label = "+"
+    frame()
+    click_label = nil
+    frame()
+
+    -- the click frame: the fields are still up, the legend is not
     click_label = "Legend"
     frame()
     click_label = nil
 
-    check(count_opened("steelblue_rename_legend") == 0,
-      "h1) the panel opens no popup of its own on the click frame",
-      count_opened("steelblue_rename_legend") .. " OpenPopup calls")
+    check(drew("Rename selected markers"),
+      "h1) the click frame still draws the tab body", #labels .. " buttons")
     check(not drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
-      "h1b) and draws no legend on it either", #texts .. " texts")
+      "h1b) and no legend on it yet", #texts .. " texts")
 
-    -- the next frame: the host collects the request and draws the popup
+    -- the next frame: the legend has the body
     frame()
 
-    check(count_opened("steelblue_rename_legend") == 1,
-      "h2) the host opens it exactly once, one frame later",
-      count_opened("steelblue_rename_legend") .. " OpenPopup calls")
     check(drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
-      "h2b) and the legend is on screen", "")
+      "h2) the next frame draws the legend in the tab", "")
+    check(drew_text_containing("One sequence is generated per marker colour"),
+      "h2b) with the introduction sentence above the lines", "")
+    check(drew("Close"), "h2c) and a Close button next to the heading", "")
+    check(not drew("Rename selected markers") and not drew("Reset to defaults")
+      and not drew("Legend"),
+      "h3) it REPLACES the body -- no Rename, Reset or Legend button left",
+      table.concat(labels, ", "))
 
-    local close_at = label_index("Close")
-    local panel_at = label_index("Rename selected markers")
-    check(close_at and panel_at and close_at < panel_at,
-      "h3) the popup is drawn by the host, before the tab body",
-      "Close at " .. tostring(close_at) .. ", panel at " .. tostring(panel_at))
-
-    local call = window_pos_calls[1]
-    check(#window_pos_calls == 1 and call and call.x == 100 and call.y == 127,
-      "h4) SetNextWindowPos once, under the button (100, 100 + 23 + 4)",
-      #window_pos_calls .. " calls, x=" .. tostring(call and call.x) .. " y=" .. tostring(call and call.y))
-
-    -- the request must be spent, not repeated: a host that is handed it again
-    -- on every frame reopens the popup on every frame, and a popup that is
-    -- reopened cannot be closed by clicking outside it
-    frame()
-    frame()
-    check(count_opened("steelblue_rename_legend") == 0 and #window_pos_calls == 1,
-      "h5) two frames later it is still open, and opened no second time",
+    check(count_opened("steelblue_rename_legend") == 0 and #window_pos_calls == 0,
+      "h4) no popup is opened and no window is placed",
       count_opened("steelblue_rename_legend") .. " OpenPopup calls, "
         .. #window_pos_calls .. " position calls")
-    check(drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
-      "h5b) and it is still on screen", "")
+    check(child_balance == 0, "h4b) every BeginChild has its EndChild",
+      "balance " .. child_balance)
 
-    -- Close, then a second click: the request is taken once per click, not
-    -- once per run
+    -- the child must leave the footer its room, or the docked window grows a
+    -- scrollbar around a child that has one of its own
+    local box = child_sizes["rename_legend"]
+    check(box and box.w == 0 and box.h == 300 - (2 + 7 + 26 + 7) - 7,
+      "h4c) the legend child leaves the footer its reserve",
+      "w=" .. tostring(box and box.w) .. " h=" .. tostring(box and box.h))
+
+    -- it stays: nothing here is a one-frame request that could be spent twice
+    frame()
+    frame()
+    check(drew_text_containing("BeatFx(1)[Top]^BeatFx^")
+      and count_opened("steelblue_rename_legend") == 0,
+      "h5) two frames later it is still up, and still opened nothing", "")
+
     click_label = "Close"
     frame()
     click_label = nil
     frame()
-    check(not drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
-      "h6) Close closes the host's popup", #texts .. " texts")
 
+    check(not drew_text_containing("BeatFx(1)[Top]^BeatFx^"),
+      "h6) Close puts the legend away", #texts .. " texts")
+    check(drew("Rename selected markers") and drew("Reset to defaults")
+      and drew("Legend"),
+      "h6b) and the fields and buttons are back", table.concat(labels, ", "))
+    check(child_balance == 0, "h6c) the child stack is still balanced",
+      "balance " .. child_balance)
+
+    check(marker(2).name == "verse", "h7) and nothing was renamed on the way",
+      marker(2).name)
+
+    -- a second click opens it again: the flag is not a fuse
     click_label = "Legend"
     frame()
     click_label = nil
     frame()
-    check(drew_text_containing("BeatFx(1)[Top]^BeatFx^") and #window_pos_calls == 2,
-      "h7) a second click opens it again, anchored again",
+    check(drew_text_containing("BeatFx(1)[Top]^BeatFx^") and #window_pos_calls == 0,
+      "h8) a second click opens it again, still without a window",
       #window_pos_calls .. " position calls")
-    check(marker(2).name == "verse", "h8) and nothing was renamed on the way",
+
+    click_label = "Close"
+    frame()
+    click_label = nil
+    frame()
+
+    -- The state survived both round trips: the cue number is still the 2 the
+    -- "+" put there before the legend was ever opened. A panel that reset its
+    -- fields on the way in or out would rename to "verse(1)[Top]^verse^" here.
+    click_label = "Rename selected markers"
+    frame()
+    click_label = nil
+    frame()
+
+    check(marker(2).name == "verse(2)[Top]^verse^",
+      "h9) the fields survived: the cue number is still the one typed before",
       marker(2).name)
   end
 end
