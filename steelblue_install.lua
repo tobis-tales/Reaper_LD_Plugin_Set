@@ -487,6 +487,129 @@ local function register_plugins(target)
   return registered
 end
 
+-- ---------------------------------------------------------------- autostart
+
+-- REAPER reopens its own windows after a restart (Mixer, Media Explorer, ...)
+-- but never a ReaScript window. The one documented hook for "run this when
+-- REAPER starts" is a script called `__startup.lua` in the resource path's
+-- Scripts folder -- two underscores, that exact name, run at launch. Source:
+-- The REAPER Blog, "How to use Startup Actions in REAPER" (March 2021). The
+-- REAPER binary itself only spells out the EEL twin, "%s/__startup.eel"; the
+-- Lua name is nowhere in its strings, which is why this is documented from the
+-- outside and not from `strings` like the rest of the API checks.
+-- (The URL is in REPORT-v2g-workspace-autostart.md -- writing it here would
+-- read as a `reaper.<name>` call to installer_test's API-name check.)
+--
+-- That file belongs to the user, not to us: other scripts live there too. So we
+-- own exactly the lines between our two markers and never touch a byte outside
+-- them.
+local STARTUP_BEGIN = "-- steelblue LD Tools: autostart (managed by steelblue_install.lua) -- begin"
+local STARTUP_END = "-- steelblue LD Tools: autostart -- end"
+
+local WORKSPACE_FILE = "steelblue_workspace.lua"
+
+local function startup_dir()
+  return reaper.GetResourcePath() .. SEP .. "Scripts" .. SEP
+end
+
+-- The block asks the workspace itself whether it wants to come back: the
+-- workspace writes "1" while its window is open and "0" when the user closes
+-- it, so quitting REAPER with the window open leaves "1" standing.
+--
+-- NamedCommandLookup returns 0 for an id this REAPER does not know -- after a
+-- reinstall from a different folder, for instance. Then nothing happens, which
+-- is the right amount of noise for a startup script.
+local function autostart_block(command_id, newline)
+  return table.concat({
+    STARTUP_BEGIN,
+    "do",
+    '  if reaper.GetExtState("steelblue_workspace", "autostart") == "1" then',
+    '    local cmd = reaper.NamedCommandLookup("' .. command_id .. '")',
+    "    if cmd ~= 0 then reaper.Main_OnCommand(cmd, 0) end",
+    "  end",
+    "end",
+    STARTUP_END,
+  }, newline)
+end
+
+-- Three cases, and only the middle one is interesting: no file (write ours),
+-- someone else's file (append, leaving their bytes exactly as they were), our
+-- own block already in it (replace just that stretch). A second install must
+-- not stack a second copy of the block on top of the first.
+local function write_autostart(command_id)
+  local path = startup_dir() .. "__startup.lua"
+
+  local existing
+  local handle = io.open(path, "rb")
+  if handle then
+    existing = handle:read("a")
+    handle:close()
+  end
+
+  -- A file written on Windows is CRLF throughout; mixing in bare LFs would work
+  -- but looks broken in Notepad, and this is a file people open by hand.
+  local newline = (existing and existing:find("\r\n", 1, true)) and "\r\n" or "\n"
+  local block = autostart_block(command_id, newline)
+
+  local out
+  if not existing or existing == "" then
+    out = block .. newline
+  else
+    local begin_at = existing:find(STARTUP_BEGIN, 1, true)
+    local _, end_at = existing:find(STARTUP_END, 1, true)
+
+    if begin_at and end_at and end_at > begin_at then
+      out = existing:sub(1, begin_at - 1) .. block .. existing:sub(end_at + 1)
+    else
+      -- terminate their last line if they did not, then one blank line
+      local tail = existing:sub(-#newline) == newline and "" or newline
+      out = existing .. tail .. newline .. block .. newline
+    end
+  end
+
+  reaper.RecursiveCreateDirectory(startup_dir(), 0)
+
+  local target = io.open(path, "wb")
+  if not target then
+    return false
+  end
+  target:write(out)
+  target:close()
+  return true
+end
+
+-- The workspace's command ID as a startup script can name it. AddRemoveReaScript
+-- hands back a number that is only valid in this session; ReverseNamedCommandLookup
+-- turns it into the "_RS…" string that survives a restart.
+--
+-- REAPER returns that string WITHOUT the leading underscore, while
+-- NamedCommandLookup wants it WITH one -- so normalise instead of trusting
+-- either end. No id, no block: a startup file that calls Main_OnCommand(0) would
+-- be worse than no autostart at all.
+local function setup_autostart(registered)
+  local entry
+  for _, candidate in ipairs(registered) do
+    if candidate.plugin.file == WORKSPACE_FILE then
+      entry = candidate
+    end
+  end
+
+  if not entry or not reaper.ReverseNamedCommandLookup then
+    return false
+  end
+
+  local ok, id = pcall(reaper.ReverseNamedCommandLookup, entry.cmd)
+  if not ok or type(id) ~= "string" or id == "" then
+    return false
+  end
+
+  if id:sub(1, 1) ~= "_" then
+    id = "_" .. id
+  end
+
+  return write_autostart(id)
+end
+
 local function shortcut_of(entry)
   if reaper.CountActionShortcuts(entry.section, entry.cmd) < 1 then
     return nil
@@ -529,7 +652,7 @@ end
 
 -- ---------------------------------------------------------------- report
 
-local function summary(registered, target, restart_needed, removed)
+local function summary(registered, target, restart_needed, removed, autostart)
   local lines = { "Installed:", "" }
 
   for _, entry in ipairs(registered) do
@@ -554,6 +677,9 @@ local function summary(registered, target, restart_needed, removed)
   lines[#lines + 1] = ""
   lines[#lines + 1] = "The disk image is no longer needed — you can eject and delete it."
   lines[#lines + 1] = "The plugins are in the Action List under their file names."
+  lines[#lines + 1] = autostart
+    and "Reopens the workspace at startup when it was open at quit."
+    or "Autostart not set up (no command id)"
   lines[#lines + 1] = ""
 
   -- An extension placed a minute ago is not loaded yet: REAPER reads UserPlugins
@@ -669,8 +795,12 @@ local function main()
     return
   end
 
+  -- After register_plugins, never before: the command ID the startup block
+  -- names only exists once AddRemoveReaScript has handed it out.
+  local autostart = setup_autostart(registered)
+
   assign_shortcuts(registered)
-  summary(registered, target, restart_needed, removed)
+  summary(registered, target, restart_needed, removed, autostart)
 
   if restart_needed then
     offer_quit()

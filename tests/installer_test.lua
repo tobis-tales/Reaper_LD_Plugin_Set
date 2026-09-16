@@ -61,6 +61,14 @@ end
 local log, answers, answer_at = {}, {}, 0
 local scenario
 
+-- What the fake REAPER says the workspace action is called. The real one looks
+-- exactly like this except for the leading underscore, which REAPER strips and
+-- NamedCommandLookup wants back -- the installer normalises either way.
+local WORKSPACE_COMMAND_ID = "_RS1234abcd"
+
+local STARTUP_BEGIN = "-- steelblue LD Tools: autostart (managed by steelblue_install.lua) -- begin"
+local STARTUP_END = "-- steelblue LD Tools: autostart -- end"
+
 local function next_answer()
   answer_at = answer_at + 1
   return answers[answer_at] or 1
@@ -96,9 +104,23 @@ local function fake()
     return false
   end
   r.SectionFromUniqueID = function() return "MAIN" end
+  -- The command ID AddRemoveReaScript hands out is a session number; the "_RS…"
+  -- string a startup script can name comes back from ReverseNamedCommandLookup.
+  -- Keep the mapping here, so a scenario can also take that call away and see
+  -- what the installer does without it.
+  local ids = {}
   r.AddRemoveReaScript = function(add, sec, fn, commit)
     log[#log + 1] = { kind = "register", file = fn:match("([^/]+)$"), path = fn, commit = commit }
-    return 40000 + #log
+    local cmd = 40000 + #log
+    ids[cmd] = fn:find("steelblue_workspace.lua", 1, true) and WORKSPACE_COMMAND_ID
+      or ("_RSother" .. cmd)
+    return cmd
+  end
+  if not scenario.no_reverse_lookup then
+    r.ReverseNamedCommandLookup = function(cmd)
+      log[#log + 1] = { kind = "reverse_lookup", cmd = cmd }
+      return ids[cmd]
+    end
   end
   r.CountActionShortcuts = function() return scenario.existing_shortcuts and 1 or 0 end
   r.GetActionShortcutDesc = function() return true, scenario.existing_shortcuts and "Cmd+Shift+B" or "" end
@@ -170,6 +192,15 @@ local function run(name, setup, check)
     end
   end
 
+  -- Someone else's startup script, already in place before we ever run.
+  if setup.startup_before then
+    local dir = scenario.resource_path .. "/Scripts/"
+    os.execute(string.format("mkdir -p %q", dir))
+    local h = io.open(dir .. "__startup.lua", "wb")
+    h:write(setup.startup_before)
+    h:close()
+  end
+
   answers = setup.answers or {}
   answer_at = 0
   log = {}
@@ -192,6 +223,36 @@ local function count(log, kind)
   local n = 0
   for _, e in ipairs(log) do if e.kind == kind then n = n + 1 end end
   return n
+end
+
+-- The startup file as it stands on disk right now, or nil if there is none.
+local function startup_text()
+  local h = io.open(scenario.resource_path .. "/Scripts/__startup.lua", "rb")
+  if not h then
+    return nil
+  end
+  local data = h:read("a")
+  h:close()
+  return data
+end
+
+local function occurrences(haystack, needle)
+  local n, at = 0, 1
+  while true do
+    local from, to = haystack:find(needle, at, true)
+    if not from then return n end
+    n = n + 1
+    at = to + 1
+  end
+end
+
+-- Run the installer once more into the same fake REAPER, the way a second
+-- install over an existing one does.
+local function run_again()
+  answers = { 1, 7 }
+  answer_at = 0
+  local ok, err = pcall(dofile, PKG .. "steelblue_install.lua")
+  return ok, err
 end
 
 local function dialogs_matching(log, pattern)
@@ -296,6 +357,130 @@ check(run("nothing is removed when the folder is clean", {
   end
 
   return true, "nothing deleted, no Removed block in the summary"
+end))
+
+-- --- the startup script ----------------------------------------------------
+
+-- Tobi, 2026-09-16: "steelblue workspace bleibt nach Restart von REAPER nicht
+-- aktiv." REAPER restores its own windows and never a ReaScript one, so the
+-- installer leaves a marked block in <resource>/Scripts/__startup.lua that runs
+-- the workspace action again -- but only if the workspace said it was open.
+
+check(run("a) no __startup.lua yet: one is written with both markers", {
+  imgui = true, js = true, answers = { 1, 7 },
+}, function(log)
+  local text = startup_text()
+  if not text then return false, "no __startup.lua was written" end
+  if not text:find(STARTUP_BEGIN, 1, true) then return false, "no begin marker" end
+  if not text:find(STARTUP_END, 1, true) then return false, "no end marker" end
+  if not text:find(WORKSPACE_COMMAND_ID, 1, true) then
+    return false, "the block names no command id: " .. text
+  end
+  -- the workspace's id, not some other plugin's
+  if text:find("_RSother", 1, true) then return false, "named the wrong action" end
+  if not dialogs_matching(log, "Reopens the workspace at startup") then
+    return false, "the summary never mentioned the autostart"
+  end
+  return true, "written, both markers, " .. WORKSPACE_COMMAND_ID
+end))
+
+-- Somebody else's startup script is the normal case, not the exception: this
+-- file is where every REAPER user parks their own launch code.
+local FOREIGN = 'reaper.ShowConsoleMsg("hello from my own startup\\n")\nlocal x = 1\n'
+
+check(run("b) a foreign __startup.lua keeps its bytes, block goes behind", {
+  imgui = true, js = true, answers = { 1, 7 }, startup_before = FOREIGN,
+}, function()
+  local text = startup_text()
+  if not text then return false, "the file disappeared" end
+  if text:sub(1, #FOREIGN) ~= FOREIGN then
+    return false, "the foreign lines were changed: " .. string.format("%q", text:sub(1, #FOREIGN))
+  end
+  if occurrences(text, STARTUP_BEGIN) ~= 1 then
+    return false, occurrences(text, STARTUP_BEGIN) .. " begin markers, expected 1"
+  end
+  if text:find(STARTUP_BEGIN, 1, true) < #FOREIGN then
+    return false, "our block was put in front of the foreign lines"
+  end
+  return true, "two foreign lines byte-identical, one block behind them"
+end))
+
+check(run("c) a second install replaces the block instead of stacking it", {
+  imgui = true, js = true, answers = { 1, 7 }, startup_before = FOREIGN,
+}, function()
+  local ok, err = run_again()
+  if not ok then return false, "the second run failed: " .. tostring(err) end
+
+  local text = startup_text()
+  if not text then return false, "the file disappeared" end
+  if text:sub(1, #FOREIGN) ~= FOREIGN then
+    return false, "the second run changed the foreign lines"
+  end
+  local begins, ends = occurrences(text, STARTUP_BEGIN), occurrences(text, STARTUP_END)
+  if begins ~= 1 or ends ~= 1 then
+    return false, begins .. " begin / " .. ends .. " end markers after two runs, expected 1 / 1"
+  end
+  return true, "still exactly one block, foreign lines untouched"
+end))
+
+check(run("d) no ReverseNamedCommandLookup: no file, and the summary says so", {
+  imgui = true, js = true, answers = { 1, 7 }, no_reverse_lookup = true,
+}, function(log)
+  if startup_text() then return false, "wrote a startup file with no command id to put in it" end
+  if not dialogs_matching(log, "Autostart not set up") then
+    return false, "the summary claimed nothing was wrong"
+  end
+  if dialogs_matching(log, "Reopens the workspace at startup") then
+    return false, "the summary promised an autostart it did not set up"
+  end
+  return true, "nothing written, summary says 'Autostart not set up (no command id)'"
+end))
+
+-- A startup script that does not compile takes every other startup script down
+-- with it, so the block has to be real Lua -- and it has to do nothing at all
+-- unless the workspace asked for it.
+check(run("e) the block is valid Lua and only fires on autostart=1", {
+  imgui = true, js = true, answers = { 1, 7 },
+}, function()
+  local text = startup_text()
+  if not text then return false, "no __startup.lua was written" end
+
+  local chunk, err = load(text, "__startup.lua")
+  if not chunk then return false, "does not compile: " .. tostring(err) end
+
+  local real_reaper = reaper
+  local ran
+  local function play(autostart)
+    ran = {}
+    reaper = {
+      GetExtState = function(section, key)
+        ran[#ran + 1] = "get " .. section .. "/" .. key
+        return autostart
+      end,
+      NamedCommandLookup = function(id)
+        ran[#ran + 1] = "lookup " .. id
+        return id == WORKSPACE_COMMAND_ID and 40999 or 0
+      end,
+      Main_OnCommand = function(cmd) ran[#ran + 1] = "run " .. tostring(cmd) end,
+    }
+    local ok, e = pcall(chunk)
+    reaper = real_reaper
+    return ok, e, table.concat(ran, ", ")
+  end
+
+  local ok, e, trace = play("1")
+  if not ok then return false, "threw on autostart=1: " .. tostring(e) end
+  if not trace:find("run 40999", 1, true) then
+    return false, "autostart=1 did not run the action: " .. trace
+  end
+
+  local ok0, e0, trace0 = play("0")
+  if not ok0 then return false, "threw on autostart=0: " .. tostring(e0) end
+  if trace0:find("run ", 1, true) then
+    return false, "autostart=0 ran something anyway: " .. trace0
+  end
+
+  return true, "compiles; '1' runs 40999, '0' runs nothing"
 end))
 
 -- the last AddRemoveReaScript must commit
