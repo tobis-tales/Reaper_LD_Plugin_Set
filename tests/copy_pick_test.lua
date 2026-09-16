@@ -56,6 +56,9 @@ local function build_reaper(opts)
   local deferred, footer_text = nil, nil
   local buttons, checkboxes, texts = {}, {}, {}
   local children, child_depth, max_child_depth = 0, 0, 0
+  -- what BeginChild was asked for, and where SetCursorPosX put the cursor:
+  -- the two numbers that say whether the list is 520 wide and sits right
+  local child_sizes, cursor_x_sets = {}, {}
   local click_label, check_label = nil, nil
   local selected_rows = opts.selected_rows or {}
   local ext_state = {}
@@ -219,6 +222,9 @@ local function build_reaper(opts)
           children = children + 1
           child_depth = child_depth + 1
           if child_depth > max_child_depth then max_child_depth = child_depth end
+          -- (ctx, str_id, size_w, size_h, ...) -- the geometry the layout asked
+          -- for, which is the only way an offline harness can see a layout at all
+          child_sizes[#child_sizes + 1] = { id = a2, w = a3, h = a4 }
           return true
         end
         if key == "ImGui_EndChild" then child_depth = child_depth - 1 return nil end
@@ -237,6 +243,7 @@ local function build_reaper(opts)
         end
 
         if key == "ImGui_TextColored" then texts[#texts + 1] = a3 return nil end
+        if key == "ImGui_SetCursorPosX" then cursor_x_sets[#cursor_x_sets + 1] = a2 return nil end
 
         if key == "ImGui_BeginTabBar" then tab_first = nil return true end
         if key == "ImGui_BeginTabItem" then
@@ -282,6 +289,7 @@ local function build_reaper(opts)
       check_label = frame_opts.tick
       buttons, checkboxes, texts = {}, {}, {}
       children, child_depth = 0, 0
+      child_sizes, cursor_x_sets = {}, {}
       local ok, err = pcall(deferred)
       click_label, check_label = nil, nil
       if not ok then error(err) end
@@ -303,6 +311,22 @@ local function build_reaper(opts)
     children = function() return children end,
     child_balance = function() return child_depth end,
     max_child_depth = function() return max_child_depth end,
+
+    -- The size BeginChild was called with, by child id.
+    child_size = function(id)
+      for _, size in ipairs(child_sizes) do
+        if size.id == id then return size.w, size.h end
+      end
+      return nil
+    end,
+    -- Was the cursor moved to exactly this x at some point in the frame?
+    set_cursor_x = function(x)
+      for _, seen in ipairs(cursor_x_sets) do
+        if seen == x then return true end
+      end
+      return false
+    end,
+    cursor_x_sets = function() return cursor_x_sets end,
 
     -- which tick boxes were drawn, and with which value
     ticks = function()
@@ -559,6 +583,12 @@ do
     h.children() .. " children")
   check(h.child_balance() == 0, "f4) every BeginChild has its EndChild",
     "balance " .. h.child_balance())
+
+  -- the single window keeps its 600 px list: that window auto-sizes, so the
+  -- list must not be the thing deciding how wide it gets
+  local w, list_h = h.child_size("copy_pick_list")
+  check(w == 600, "f4b) the single window's list is still 600 wide", tostring(w))
+  check(list_h == 8 * (23 + 7), "f4c) and eight rows tall", tostring(list_h))
 end
 
 do
@@ -585,6 +615,41 @@ do
   handle.frame()
   check(handle.added_text() == "verse@34.20 buildup@37.95",
     "f10) and so does the copy", handle.added_text())
+end
+
+-- ------------------------------------ (i) where the tab puts its two columns
+
+-- Tobi, 2026-09-16: "Das Feld mit den Markern muss nicht so breit sein, dafuer
+-- kann man links etwas auflockern." The list is now a FIXED 520 px against the
+-- right edge instead of "all the width that is left".
+--
+-- The fake reports GetContentRegionAvail = (1400, 300) and GetCursorPosX = 12,
+-- so the list has to start at 12 + 1400 - 520 = 892 and be 520 wide. Those two
+-- numbers are the only part of a layout an offline harness can see at all
+-- (AGENTS.md: "Layout is the one thing the offline harness cannot check") --
+-- they prove the intent, not the picture. TT 212 is the picture.
+do
+  local handle
+  reaper, handle = build_reaper({ selected_rows = { 1, 2 }, ext = { active_tab = "copy" } })
+  local ok, err = pcall(dofile, folder .. "steelblue_workspace.lua")
+  if not ok then error("steelblue_workspace.lua failed to load: " .. tostring(err)) end
+
+  handle.frame()
+
+  local w, list_h = handle.child_size("copy_pick_list")
+  check(w == 520, "i1) the tab's list is 520 wide, not the rest of the docker",
+    tostring(w))
+  check(handle.set_cursor_x(12 + 1400 - 520),
+    "i2) and starts at the right edge minus 520", "x = " .. tostring(12 + 1400 - 520))
+  check(list_h == 300 - 42 - 7,
+    "i3) and still reaches down to the host's footer", tostring(list_h))
+
+  -- the sections that loosen the left column up
+  check(handle.drew_text("EDIT CURSOR") and handle.drew_text("TARGET POSITION")
+    and handle.drew_text("COPY"),
+    "i4) the left column has its three section headings", "")
+  check(handle.drew_text("Measure M:34.2  \194\183  Timecode T:34.2"),
+    "i5) Measure and Timecode share one line, to fit a 400 px docker", "")
 end
 
 -- ------------------------------------------------ (h) 600 markers, measured

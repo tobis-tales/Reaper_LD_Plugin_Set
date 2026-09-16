@@ -48,8 +48,26 @@ local LIST_ROWS = 8
 -- wide the auto-sizing window is.
 local LIST_WIDTH = 600
 
--- Wide layout: the controls column, the rest of the docker is the list.
-local LEFT_WIDTH = 420
+-- Wide layout (Tobi, 2026-09-16: "Das Feld mit den Markern muss nicht so breit
+-- sein, dafuer kann man links etwas auflockern"). The list is a FIXED 520 px
+-- pinned to the right edge of the tab; everything left of it belongs to the
+-- controls. 520 carries the tick box, the 80 px position column and a long
+-- marker name without the names running into the lane labels.
+local LIST_WIDTH_WIDE = 520
+
+-- Between the controls column and the list.
+local COLUMN_GAP = 24
+
+-- Below this the list gives width back rather than pushing the buttons (240 px
+-- wide) off the left edge. Only reachable in a docker far narrower than
+-- anything Tobi uses; without it a 600 px docker would draw the list on top of
+-- the controls.
+local MIN_LEFT_WIDTH = 280
+
+-- Wide layout: the three copy buttons are stacked, so they can afford to be
+-- wider than in the single window, where all three sit in one row.
+local BUTTON_WIDTH_WIDE = 240
+local BUTTON_WIDTH_NARROW = 200
 
 -- What steelblue_workspace.lua reserves under the panel for its status strip
 -- (steelblue_workspace.lua: FOOTER_HEIGHT = 2 + 7 + 26 + 7), plus the one
@@ -73,6 +91,21 @@ local function child(ctx, SB, id, width, height, background, draw)
     tinted = true
   end
 
+  -- No flags, and that is the considered answer to "the list must not grow a
+  -- horizontal scrollbar" (checked against the installed dylib, ReaImGui 0.10 /
+  -- Dear ImGui 1.92):
+  --   WindowFlags_HorizontalScrollbar  "Allow horizontal scrollbar to appear
+  --                                     (off by default)" -- so not passing it
+  --                                     IS the switch. Content wider than the
+  --                                     child is clipped at its edge instead.
+  --   WindowFlags_NoScrollbar          "Disable scrollbars (window can still
+  --                                     scroll with mouse or programmatically)"
+  --                                     -- that would take the VERTICAL bar
+  --                                     away too, and the list needs it.
+  --   ChildFlags_*                     nothing there is about scrolling:
+  --                                     Borders, FrameStyle, AlwaysUseWindow-
+  --                                     Padding, NavFlattened, ResizeX/Y,
+  --                                     AutoResizeX/Y, AlwaysAutoResize.
   local child_flags = reaper.ImGui_ChildFlags_None and reaper.ImGui_ChildFlags_None() or 0
   local window_flags = reaper.ImGui_WindowFlags_None and reaper.ImGui_WindowFlags_None() or 0
 
@@ -472,21 +505,23 @@ function M.create(env)
 
   -- What gets copied is read at CLICK time and handed to the queued work, the
   -- same way the selection used to be.
-  local function draw_buttons(ctx, SB, stacked)
+  local function draw_buttons(ctx, SB, stacked, width)
+    width = width or BUTTON_WIDTH_NARROW
+
     local function next_item()
       if not stacked then
         reaper.ImGui_SameLine(ctx)
       end
     end
 
-    if SB.primary_button(ctx, "Copy to cursor", 200) then
+    if SB.primary_button(ctx, "Copy to cursor", width) then
       local picked = picked_entries()
       pending = function() run_copy(picked, reaper.GetCursorPosition()) end
     end
 
     next_item()
 
-    if SB.button(ctx, "Copy to measure.beats", 200) then
+    if SB.button(ctx, "Copy to measure.beats", width) then
       local picked = picked_entries()
       local target = parse_target_position(measure_input)
       pending = function() run_copy(picked, target) end
@@ -494,7 +529,7 @@ function M.create(env)
 
     next_item()
 
-    if SB.button(ctx, "Copy to hh:mm:ss:ff", 200) then
+    if SB.button(ctx, "Copy to hh:mm:ss:ff", width) then
       local picked = picked_entries()
       local target = parse_target_position(timecode_input)
       pending = function() run_copy(picked, target) end
@@ -552,45 +587,82 @@ function M.create(env)
     draw_buttons(ctx, SB, false)
   end
 
-  -- Two columns across the docker: the controls on the left at a fixed width,
-  -- the marker list taking the rest of the width and all of the height the
-  -- host has not reserved for its footer.
+  -- How wide the list is and where it starts, given what the host has left.
+  -- Returns nil for the x when the build cannot say, and the caller then falls
+  -- back to a plain SameLine.
+  local function wide_list_geometry(ctx)
+    local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
+    local start_x = reaper.ImGui_GetCursorPosX(ctx)
+
+    if type(avail_w) ~= "number" or avail_w <= 0 then
+      return LIST_WIDTH_WIDE, nil
+    end
+
+    local width = LIST_WIDTH_WIDE
+    if avail_w < LIST_WIDTH_WIDE + MIN_LEFT_WIDTH + COLUMN_GAP then
+      width = math.max(240, avail_w - MIN_LEFT_WIDTH - COLUMN_GAP)
+    end
+
+    if type(start_x) ~= "number" then
+      return width, nil
+    end
+
+    return width, start_x + avail_w - width
+  end
+
+  -- Two columns across the docker: the controls on the left, the marker list
+  -- pinned to the RIGHT edge at a fixed 520 px. Right-aligning is allowed here
+  -- for the same reason steelblue_workspace.lua's header_right is allowed to do
+  -- it: the docker decides the width, so "available minus my own width" cannot
+  -- feed back into the window size the way it does in an auto-resizing window.
+  -- Nothing inside the left column is right-aligned.
   --
   -- The left column is a GROUP, not a child: it has to keep drawing its
   -- buttons whatever happens, and a child that reports itself clipped would
   -- take the whole panel off screen with it. Only the list -- the part that
   -- has to scroll -- is a child.
+  --
+  -- It carries the same sections as the single window, because a flat stack of
+  -- rows with nothing between them was what Tobi called untidy (2026-09-16).
+  -- Measure and Timecode share ONE line: the sections and separators cost
+  -- about 91 px that the old flat column did not, and at a 400 px docker the
+  -- column has roughly 250 px to live in -- see REPORT-v2j for the arithmetic.
   local function draw_wide(ctx, SB, entries, current_cursor_pos)
-    local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
     local height = wide_column_height(ctx)
-
-    local left_w = LEFT_WIDTH
-    if type(avail_w) == "number" and avail_w > 0 and avail_w < LEFT_WIDTH * 2 then
-      left_w = math.max(240, avail_w / 2)
-    end
+    local list_w, list_x = wide_list_geometry(ctx)
 
     reaper.ImGui_BeginGroup(ctx)
 
-    SB.label(ctx, "Measure   " .. reaper.format_timestr_pos(current_cursor_pos, "", 2))
-    SB.label(ctx, "Timecode  " .. reaper.format_timestr_pos(current_cursor_pos, "", 5))
+    SB.section(ctx, "Edit cursor")
+    SB.label(ctx, "Measure " .. reaper.format_timestr_pos(current_cursor_pos, "", 2)
+      .. "  \194\183  Timecode " .. reaper.format_timestr_pos(current_cursor_pos, "", 5))
+
+    reaper.ImGui_Separator(ctx)
+    SB.section(ctx, "Target position")
 
     draw_fields(ctx, false)
 
     SB.label(ctx, "Empty field follows the edit cursor. Type a position to pin it.")
 
-    draw_buttons(ctx, SB, true)
-    draw_pick_controls(ctx, SB, entries)
+    reaper.ImGui_Separator(ctx)
+    SB.section(ctx, "Copy")
 
-    -- Claims the column's width without submitting anything visible, so the
-    -- list starts at a fixed x whatever the longest label happens to be.
-    reaper.ImGui_Dummy(ctx, left_w, 1)
+    draw_buttons(ctx, SB, true, BUTTON_WIDTH_WIDE)
+
+    -- The tick row belongs to the list, not to the copy buttons; 6 px of air
+    -- says so without a second separator.
+    reaper.ImGui_Dummy(ctx, 1, 6)
+
+    draw_pick_controls(ctx, SB, entries)
 
     reaper.ImGui_EndGroup(ctx)
 
     reaper.ImGui_SameLine(ctx)
+    if list_x then
+      reaper.ImGui_SetCursorPosX(ctx, list_x)
+    end
 
-    -- width 0 = whatever is left of the docker
-    child(ctx, SB, "copy_pick_list", 0, height, SB.color.frame_bg,
+    child(ctx, SB, "copy_pick_list", list_w, height, SB.color.frame_bg,
       function() draw_rows(ctx, SB) end)
   end
 
