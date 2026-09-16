@@ -39,7 +39,14 @@ local function build_reaper(initial)
     GetAppVersion = function() return "7.79/OSX64" end,
     APIExists = function() return true end,
     ShowMessageBox = function() return 6 end,
-    defer = function() end,
+    -- Logged the same way as the ExtState calls above, and for the same
+    -- reason: "it ran" is not provable from a stub that silently succeeds.
+    set_action_options = function(mode)
+      ext_calls[#ext_calls + 1] = { kind = "action_options", mode = mode }
+    end,
+    defer = function()
+      ext_calls[#ext_calls + 1] = { kind = "defer" }
+    end,
     time_precise = function() return 0 end,
   }
 
@@ -86,6 +93,16 @@ end
 
 local function deleted(key)
   return #delete_calls(key) > 0
+end
+
+local function calls_of(kind)
+  local found = {}
+  for _, call in ipairs(ext_calls) do
+    if call.kind == kind then
+      found[#found + 1] = call
+    end
+  end
+  return found
 end
 
 local fails = 0
@@ -215,60 +232,65 @@ end)
 
 -- ---------------------------------------------------------------- autostart
 
--- Tobi, 2026-09-16: the workspace was gone after every REAPER restart. REAPER
--- brings its own windows back and never a ReaScript window, so the installer's
--- block in <resource>/Scripts/__startup.lua runs the action again -- but only
--- when this entry says the window was up. Both writes have to persist, or the
--- startup block reads an empty section on the next launch.
-run("j) starting writes autostart=1, with persist", function()
-  local W = load_workspace()
-  W.note_running(true)
-
-  local calls = set_calls("autostart")
-  if #calls ~= 1 then return false, #calls .. " writes, expected 1" end
-  if calls[1].value ~= "1" then return false, "wrote " .. tostring(calls[1].value) end
-  if calls[1].persist ~= true then return false, "written without persist" end
-  if calls[1].section ~= "steelblue_workspace" then
-    return false, "wrote into section " .. tostring(calls[1].section)
-  end
-  return true, 'autostart="1" in steelblue_workspace, persisted'
+-- Tobi, 2026-09-16 (TT 91/94): the workspace should open on every REAPER
+-- start, not only when it was open at quit -- so the startup block no longer
+-- reads this flag (steelblue_install.lua runs the action unconditionally
+-- now). v2g/v2i wrote it with persist, so an entry from an older install
+-- would sit in reaper-extstate.ini forever unless load_state cleans it out,
+-- the same way it already does for the "undocked" flag from the 2.0 previews.
+run("j) a stale autostart flag from v2g/v2i is deleted on load", function()
+  local W = load_workspace({ autostart = "1" })
+  local calls = delete_calls("autostart")
+  if #calls ~= 1 then return false, #calls .. " deletes, expected 1" end
+  if calls[1].persist ~= true then return false, "deleted without persist" end
+  if W.state.autostart ~= nil then return false, "the state still carries an autostart field" end
+  return true, "deleted with persist, no autostart field left in the state"
 end)
 
--- Closing the window is a decision, not an accident: without this the flag
--- would stay at "1" forever and the workspace would reopen itself for good.
-run("k) closing writes autostart=0, with persist", function()
-  local W = load_workspace()
-  W.note_running(true)
-  W.note_running(false)
-
-  local calls = set_calls("autostart")
-  if #calls ~= 2 then return false, #calls .. " writes, expected 2" end
-  if calls[2].value ~= "0" then return false, "closing wrote " .. tostring(calls[2].value) end
-  if calls[2].persist ~= true then return false, "written without persist" end
-  return true, '"1" on start, "0" on close'
+run("k) no stale flag, no delete call", function()
+  load_workspace()
+  return #delete_calls("autostart") == 0, "nothing to clean up, nothing deleted"
 end)
 
--- The two calls above prove the function; this proves run_gui actually makes
--- them. run_gui never executes under the test hook (it returns first), so the
--- call sites can only be checked by reading them.
-run("l) run_gui notes the window as running and as closed", function()
+-- Without the ExtState guard, starting the action while the workspace is
+-- already running is no longer "impossible", it is the normal case on every
+-- REAPER restart with the window left open. set_action_options(1) tells
+-- REAPER to terminate that running instance instead of asking the user or
+-- refusing to start a second one -- and it has to run before the script can
+-- ever reach a reaper.defer, or the setting arrives too late for the instance
+-- it is about. The call sits at the very top of the file, outside run_gui, so
+-- (unlike note_running before it) it fires even under this test hook -- no
+-- need to read the source instead of running it.
+run("l) set_action_options(1) runs before this script can defer", function()
+  load_workspace()
+  local options = calls_of("action_options")
+  if #options ~= 1 then return false, #options .. " calls, expected 1" end
+  if options[1].mode ~= 1 then return false, "called with mode " .. tostring(options[1].mode) end
+
+  -- run_gui never executes under the test hook (it returns first), so the
+  -- only defer() calls this fake could have logged are none at all -- which
+  -- is itself the proof that set_action_options happened first: the log has
+  -- exactly the one entry, and it is not a defer.
+  local defers = calls_of("defer")
+  if #defers ~= 0 then return false, #defers .. " defer calls logged before the hook returned" end
+
+  -- Belt and braces: the call site in the source must textually precede every
+  -- reaper.defer( in the file, run_gui's included -- so moving it inside
+  -- run_gui, after the loop is deferred, would be caught even if some future
+  -- change made the hook run further than it does today.
   local source = io.open(folder .. "steelblue_workspace.lua", "rb")
   local text = source:read("a")
   source:close()
 
-  local body = text:match("local function run_gui%(SB%)(.*)\n%-%- ----+ start")
-  if not body then return false, "could not find run_gui in the file" end
-  if not body:find("note_running(true)", 1, true) then
-    return false, "run_gui never says the window is up"
+  local option_at = text:find("reaper.set_action_options(1)", 1, true)
+  if not option_at then return false, "reaper.set_action_options(1) not found in the source" end
+  local defer_at = text:find("reaper.defer(", 1, true)
+  if not defer_at then return false, "no reaper.defer( found in the source" end
+  if option_at > defer_at then
+    return false, "set_action_options sits after the first reaper.defer( in the file"
   end
 
-  -- specifically in the branch that tears the window down
-  local closing = body:match("panel_bpm%.release%(%)")
-  if not closing then return false, "could not find the closing branch" end
-  if not body:find("note_running(false)", 1, true) then
-    return false, "run_gui never says the window is gone"
-  end
-  return true, "both call sites are in run_gui"
+  return true, "called once with mode 1, before any defer, and before it in the source"
 end)
 
 print(fails == 0 and "\nALL PASS" or ("\nFAILURES: " .. fails))

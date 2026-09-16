@@ -12,6 +12,17 @@
 
 local SCRIPT_TITLE = "steelblue LD Tools"
 
+-- v2o (2026-09-16): the startup block now runs this action on every REAPER
+-- start, even while the workspace is already open (Tobi's decision, TT 91/94
+-- -- no guard any more, see steelblue_install.lua). set_action_options(1)
+-- tells REAPER to terminate an already-running instance of THIS script
+-- instead of asking the user or refusing to start a second one; 1 is
+-- "terminate", not a count. Must run before the first reaper.defer -- once
+-- deferred, this script IS the running instance the setting is about.
+if reaper.set_action_options then
+  reaper.set_action_options(1)
+end
+
 local folder = debug.getinfo(1, "S").source:match("@?(.*[/\\])") or ""
 
 -- The only loader code left inline: something has to load the loader.
@@ -117,18 +128,13 @@ local EXT_OPEN_TAB = "open_tab"
 -- written with persist, so it would sit in reaper-extstate.ini forever.
 local EXT_STALE_UNDOCKED = "undocked"
 
--- Was the workspace on screen when REAPER was last shut down?
---
--- REAPER restores its own windows after a restart (Mixer, Media Explorer, ...)
--- and never a ReaScript one, so the workspace was gone every morning. The
--- installer's block in <resource>/Scripts/__startup.lua reads this entry at
--- launch and runs the workspace action again if it says "1".
---
--- Which makes this the only state here that is written for somebody ELSE to
--- read, so it has to be right at both ends: "1" while the window is up, "0" the
--- moment the user closes it. Quitting REAPER with the window open never runs
--- the closing branch, so "1" stays standing -- which is exactly the question
--- being asked.
+-- v2i/v2g wrote "1" here while the window was open and "0" when the user
+-- closed it, so the __startup.eel block could ask "was it open at quit?"
+-- before reopening the workspace. Tobi decided (TT 91/94, 2026-09-16) that the
+-- workspace should come back on every REAPER start regardless -- the startup
+-- block runs the action unconditionally now, and nothing reads this entry any
+-- more. Same situation as EXT_STALE_UNDOCKED above: written with persist, so
+-- it would sit in reaper-extstate.ini forever unless load_state cleans it up.
 local EXT_AUTOSTART = "autostart"
 
 local function ext_get(key)
@@ -205,12 +211,13 @@ local function load_state()
   if ext_get(EXT_STALE_UNDOCKED) ~= "" then
     ext_delete(EXT_STALE_UNDOCKED, true)
   end
-end
 
--- Persisted, or the startup block reads an empty section on the next launch:
--- ExtState without persist lives only as long as this REAPER run.
-local function note_running(running)
-  ext_set(EXT_AUTOSTART, running and "1" or "0", true)
+  -- v2o: the startup block no longer reads this either -- the workspace opens
+  -- every start now, not just when it was open at quit. Same cleanup as above,
+  -- so a flag from an older install does not sit in reaper-extstate.ini forever.
+  if ext_get(EXT_AUTOSTART) ~= "" then
+    ext_delete(EXT_AUTOSTART, true)
+  end
 end
 
 -- Another script can ask for a tab by writing its id here; the workspace takes
@@ -283,10 +290,6 @@ end
 local function run_gui(SB)
   local ctx = reaper.ImGui_CreateContext(SCRIPT_TITLE)
   enable_docking(ctx)
-
-  -- Before the first frame: from here on, a REAPER that quits while this runs
-  -- should bring the workspace back.
-  note_running(true)
 
   local first_frame = true
 
@@ -527,10 +530,6 @@ local function run_gui(SB)
     if open then
       reaper.defer(loop)
     else
-      -- The user closed the window. That is a decision, not an accident, so the
-      -- next REAPER start must leave it closed.
-      note_running(false)
-
       -- the audio accessor is a REAPER resource, not a Lua one
       panel_bpm.release()
       BOOT.destroy_context(ctx)
@@ -552,7 +551,6 @@ if TEST_HOOK then
   TEST_HOOK.load_state = load_state
   TEST_HOOK.set_active_tab = set_active_tab
   TEST_HOOK.read_open_tab_request = read_open_tab_request
-  TEST_HOOK.note_running = note_running
   TEST_HOOK.dock_decision = dock_decision
   TEST_HOOK.selection_text = selection_text
   return
